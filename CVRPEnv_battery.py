@@ -1,8 +1,11 @@
 
 from dataclasses import dataclass
 import torch
-
+import sys
+import os
 from CVRProblemDef import get_random_problems, augment_xy_data_by_8_fold
+
+
 
 
 @dataclass #dataclass는 데이터 중심의 클래스 정의를 더 간결하고 명확하게 만들어주는 도구임
@@ -74,7 +77,8 @@ class CVRPEnv: #환경을 설정하고 데이터를 관리하며 상태를 추�
         # shape: (batch, pomo)
         self.load = None #각 에이전트가 현재 드론에 남아있는 용량을 저장하는 변수
         # shape: (batch, pomo)
-        self.soc = self.initial_battery -5 
+        self.soc = None
+        # shape: (batch, pomo)
         self.visited_ninf_flag = None #방문한 노드들에 대해 마스크를 적용하는 플래그 변수
         # shape: (batch, pomo, problem+1)
         self.ninf_mask = None #선택 불가능한 노드에 대해 마스크를 적용하는 변수
@@ -105,7 +109,7 @@ class CVRPEnv: #환경을 설정하고 데이터를 관리하며 상태를 추�
             depot_xy = self.saved_depot_xy[self.saved_index:self.saved_index+batch_size]
             node_xy = self.saved_node_xy[self.saved_index:self.saved_index+batch_size]
             node_demand = self.saved_node_demand[self.saved_index:self.saved_index+batch_size]
-            self.saved_index += batch_size # 저장된 인덱스 이후의 데이터를 사용할 수 있도록 함
+            self.saved_index = self.saved_index + batch_size # 저장된 인덱스 이후의 데이터를 사용할 수 있도록 함
 
         if aug_factor > 1: #데이터 증강 배율이 1보다 크면 데이터 증강 수행
             if aug_factor == 8: #8배인경우 배치 크기 8배로 설정
@@ -164,7 +168,7 @@ class CVRPEnv: #환경을 설정하고 데이터를 관리하며 상태를 추�
     def pre_step(self): #reset_state를 step_state에 저장하고 다음 단계를 수행하기 전 상태를 업데이트하도록 준비하는 역할
         self.step_state.selected_count = self.selected_count # 현재까지 선택된 노드의 개수를 나타냄
         self.step_state.load = self.load # 각 POMO가 현재 가지고 있는 용량을 나타냄
-        self.step_state_soc = self.soc # 각 드론의 배터리 잔량 업데이트
+        self.step_state.soc = self.soc # 각 드론의 배터리 잔량 업데이트
         self.step_state.current_node = self.current_node # 현재 선택된 노드를 나타냄
         self.step_state.ninf_mask = self.ninf_mask # 선택할 수 없는 노드를 마스킹하기 위한 텐서
         self.step_state.finished = self.finished # 각 POMO가 작업을 완료했는지 여부를 나타냄
@@ -173,101 +177,127 @@ class CVRPEnv: #환경을 설정하고 데이터를 관리하며 상태를 추�
         done = False #에피소드가 완료되지 않았음을 표현
         return self.step_state, reward, done #현재 상태 보상 완료상태를 반환
 
-    def step(self, selected): #selected라는 인자를 받으며 각 POMO가 현재 단계에서 선택한 노드를 나타내는 텐서
+    def step(self, selected): 
         # selected.shape: (batch, pomo)
 
-        # Dynamic-1
-        ####################################
-        self.selected_count += 1 #현재까지 선택된 노드의 개수이며 한 단계가 지나갔으므로 1을 증가시킴
-        self.current_node = selected # 현재 POMO들이 위치한 노드를 나타냄
-        # shape: (batch, pomo)
-        self.selected_node_list = torch.cat((self.selected_node_list, self.current_node[:, :, None]), dim=2) #지금까지 방문한 노드들의 목록을 기록하며, POMO들이 어떤 노드를 방문했는지 기록을 유지
-        # shape: (batch, pomo, 0~)
+        # Dynamic-1: 노드 선택과 업데이트
+        self.selected_count += 1  # 현재까지 선택된 노드의 개수를 증가
+        self.current_node = selected  # 현재 POMO들이 위치한 노드 저장
+        self.selected_node_list = torch.cat((self.selected_node_list, self.current_node[:, :, None]), dim=2)  # 선택한 노드 기록
 
-        # Dynamic-2
-        ####################################
-        self.at_the_depot = (selected == 0) #pomo가 현재 depot에 있는지를 나타냄. 선택된 노드가 0인경우 true 그렇지 않으면 false
+        # Dynamic-2: 적재량과 배터리 업데이트
+        self.at_the_depot = (selected == 0)  # 각 POMO가 현재 depot에 있는지 확인
+        print("HellO")
+        # 수요 리스트 가져오기 및 선택된 노드의 수요 추출
+        demand_list = self.depot_node_demand[:, None, :].expand(self.batch_size, self.pomo_size, -1)  # 각 노드의 수요 저장
+        gathering_index = selected[:, :, None]  # 선택된 노드의 인덱스 가져오기
+        selected_demand = demand_list.gather(dim=2, index=gathering_index).squeeze(dim=2)  # 선택된 노드의 수요 가져오기
 
-        demand_list = self.depot_node_demand[:, None, :].expand(self.batch_size, self.pomo_size, -1) #depot과 각 노드의 수요를 포함하는 텐서
-        # shape: (batch, pomo, problem+1)
-        gathering_index = selected[:, :, None] #selected 텐서에 세번째 차원을 추가하여 각 POMO가 선택한 노드를 인덱스로 사용할 수 있도록 함
-        # shape: (batch, pomo, 1)
-        selected_demand = demand_list.gather(dim=2, index=gathering_index).squeeze(dim=2) #각 POMO가 선택한 노드의 수요를 가져옴
-        # shape: (batch, pomo)
-        self.load -= selected_demand #-demand를 함으로써 현재 각 POMO의 드론이 가지고 있는 용량을 나타냄
-        self.load[self.at_the_depot] = 1 # refill loaded at the depot # depot에 있는 드론은 load를 1로 재설정
+        # Load 업데이트 (방문한 노드의 수요만큼 감소)
+        self.load = self.load - selected_demand
+        self.load[self.at_the_depot] = 1  # depot에 있는 드론은 적재량을 다시 채움
 
-        distance_to_depot= self.calculate_distance_to_depot(selected)
+        # Distance 계산 및 배터리 소모량 업데이트
+        segment_distances = self._get_segment_distances()
+
+        for i in range(self.selected_node_list.size(2) - 1):  # 각 구간의 거리에 따라 배터리 소모량 계산
+            current_distances = segment_distances[:, :, i]
+            self.soc = self.soc - self.calculate_soc(self.load, current_distances)  # 각 구간별로 배터리 소모 적용
+
+        # 배터리 잔량에 따라 depot 복귀 여부 결정
+        distance_to_depot = self.calculate_distance_to_depot(selected)
         battery_consumption_to_depot = self.calculate_soc(self.load, distance_to_depot)
-        
         remaining_battery_after_return = self.soc - battery_consumption_to_depot
-        if remaining_battery_after_return.min() <15:
-            selected[:] = 0
-        else:
-            time_per_node = self.calculate_travel_time(self.current_node)
-            battery_consumption = self.calculate_soc(self.load, time_per_node)
-            self.soc -= battery_consumption
 
-        
-        self.visited_ninf_flag[self.BATCH_IDX, self.POMO_IDX, selected] = float('-inf') # 이미 방문한 노드를 표시하는 마스크
-        # shape: (batch, pomo, problem+1)
-        self.visited_ninf_flag[:, :, 0][~self.at_the_depot] = 0  # depot is considered unvisited, unless you are AT the depot # depot에 있을 경우 node를 방문하지 않은 채로 유지
+        # 배터리가 부족한 드론은 depot으로 복귀
+        selected = selected.clone()
+        selected[(remaining_battery_after_return < 15) & (~self.at_the_depot)] = 0  # 배터리 부족한 드론만 depot으로 복귀
+        self.soc[self.at_the_depot] = self.initial_battery - 5  # depot에 도착하면 배터리 리필
 
-        self.ninf_mask = self.visited_ninf_flag.clone() #방문할 수 없는 노드를 마스킹
-        round_error_epsilon = 0.00001 # 작은 수치적 오류를 방지하기 위해 사용되는 매우 작은 값
-        demand_too_large = self.load[:, :, None] + round_error_epsilon < demand_list #pomo의 현재 수량보다 큰 수요를 가진 노드를 마스킹하기 위한 텐서
-        # shape: (batch, pomo, problem+1)
-        self.ninf_mask[demand_too_large] = float('-inf') #demand_too_large가 true인 위치에서 마스크 될 수 있게 편집
-        # shape: (batch, pomo, problem+1)
+        # 방문한 노드 마스킹 처리
+        self.visited_ninf_flag[self.BATCH_IDX, self.POMO_IDX, selected] = float('-inf')
+        self.visited_ninf_flag[:, :, 0][~self.at_the_depot] = 0  # depot은 항상 선택 가능하도록 유지
 
-        newly_finished = (self.visited_ninf_flag == float('-inf')).all(dim=2) #현재 단계에서 모든 노드를 방문 완료한 POMO들을 나타냄
-        # shape: (batch, pomo)
-        self.finished = self.finished + newly_finished # 각 POMO가 작업을 완료했는지 나타냄
-        # shape: (batch, pomo)
+        # 선택 불가능한 노드 마스킹
+        self.ninf_mask = self.visited_ninf_flag.clone()
+        round_error_epsilon = 0.00001
+        demand_too_large = self.load[:, :, None] + round_error_epsilon < demand_list
+        self.ninf_mask[demand_too_large] = float('-inf')
 
-        # do not mask depot for finished episode.
-        self.ninf_mask[:, :, 0][self.finished] = 0 # #작업이 완료된 POMO의 경우 depot을 선택할 수 있도록 마스크에서 제거
+        # 완료 여부 체크
+        newly_finished = (self.visited_ninf_flag == float('-inf')).all(dim=2)
+        self.finished = self.finished + newly_finished
 
-        self.step_state.selected_count = self.selected_count #selected.count를 현재의 selected.count로 업데이트
-        self.step_state.load = self.load # #load를 현재의 load로 업데이트
-        self.step_state.current_node = self.current_node # 현재의 current load로 업데이트
-        self.step_state.ninf_mask = self.ninf_mask #현재의 마스킹 상태로 업데이트
-        self.step_state.finished = self.finished # 현재의 finished로 업데이트
+        # depot은 완료된 이후에도 선택 가능하도록 설정
+        self.ninf_mask[:, :, 0][self.finished] = 0
 
-        # returning values
-        done = self.finished.all() #에피소드가 모든 끝났는지에 대한 여부를 판단
+        # 상태 업데이트
+        self.step_state.selected_count = self.selected_count
+        self.step_state.load = self.load
+        self.step_state.soc = self.soc  # SOC 업데이트
+        self.step_state.current_node = self.current_node
+        self.step_state.ninf_mask = self.ninf_mask
+        self.step_state.finished = self.finished
+
+        # 완료 여부 반환
+        done = self.finished.all()
         if done:
-            reward = -self._get_travel_distance()  # note the minus sign! #에피소드가 끝났으면 보상을 계산하며 이동거리는 음수값이 나옴
+            reward = -self._get_travel_distance()  # 이동 거리 계산 후 보상 부여 (음수 값)
         else:
-            reward = None # 끝나지 않았다면 none으로 설정
+            reward = None
 
-        return self.step_state, reward, done #reward done 반환
-    def calculate_soc(self, payload, time):
+        return self.step_state, reward, done
+
+
+    
+    def calculate_soc(self, payload, distances):
         # 배터리 소모율 계산
         soc_consumption = torch.zeros_like(payload)
 
         # 각 payload 구간에 따라 BCR 적용
-        soc_consumption += (payload >= 0) & (payload < 0.2) * (-2.29705 * 0.1 + 3.87886) * time
-        soc_consumption += (payload >= 0.2) & (payload < 0.4) * (-2.29705 * 0.3 + 3.87886) * time
-        soc_consumption += (payload >= 0.4) & (payload < 0.6) * (-2.29705 * 0.5 + 3.87886) * time
-        soc_consumption += (payload >= 0.6) & (payload < 0.8) * (-2.29705 * 0.7 + 3.87886) * time
-        soc_consumption += (payload >= 0.8) & (payload <= 1.0) * (-2.29705 * 0.9 + 3.87886) * time
+        soc_consumption = soc_consumption + torch.logical_and(payload >= 0, payload < 0.2) * (-2.29705 * 0.1 + 3.87886) * distances
+        soc_consumption = soc_consumption + torch.logical_and(payload >= 0.2, payload < 0.4) * (-2.29705 * 0.3 + 3.87886) * distances
+        soc_consumption = soc_consumption + torch.logical_and(payload >= 0.4, payload < 0.6) * (-2.29705 * 0.5 + 3.87886) * distances
+        soc_consumption = soc_consumption + torch.logical_and(payload >= 0.6, payload < 0.8) * (-2.29705 * 0.7 + 3.87886) * distances
+        soc_consumption = soc_consumption + torch.logical_and(payload >= 0.8, payload <= 1.0) * (-2.29705 * 0.9 + 3.87886) * distances
 
         return soc_consumption
     
-    def calculate_travel_time(self, current_node):
+    #def calculate_travel_time(self, current_node):
         # 노드 간의 거리와 속도에 따라 시간을 계산합니다.
-        distances = self._get_travel_distance()
-        time_per_node = distances / 22.0  # 속도 22km/h로 고정
-        return time_per_node
+    #   distances = self._get_travel_distance()
+    #  time_per_node = distances / 22.0  # 속도 22km/h로 고정
+    #    return time_per_node
     
     def calculate_distance_to_depot(self, selected):
         # 선택된 노드에서 디팟까지의 거리를 계산하는 함수
-        depot_xy = self.depot_node_xy[:, :, 0]  # 디팟의 좌표
-        node_xy = self.depot_node_xy[:, None, selected]  # 선택된 노드의 좌표
-        distance_to_depot = torch.sqrt(((node_xy - depot_xy) ** 2).sum(dim=-1))
-        return distance_to_depot
+        depot_xy = self.depot_node_xy[:, 0, :].unsqueeze(1).expand(self.batch_size, selected.size(1), -1)  # (batch, pomo, 2)로 확장
+        node_xy = self.depot_node_xy[self.BATCH_IDX, selected]  # 선택된 노드의 좌표
 
+        distance_to_depot = torch.sqrt(((node_xy - depot_xy) ** 2).sum(dim=-1))  # 유클리드 거리 계산
+        return distance_to_depot
+    
+    def _get_segment_distances(self):
+            gathering_index = self.selected_node_list[:, :, :, None].expand(-1, -1, -1, 2)
+            # shape: (batch, pomo, selected_list_length, 2)
+    
+            all_xy = self.depot_node_xy[:, None, :, :].expand(-1, self.pomo_size, -1, -1)
+            # shape: (batch, pomo, problem+1, 2)
+
+            ordered_seq = all_xy.gather(dim=2, index=gathering_index)
+            # 선택된 노드들의 좌표를 순서대로 나열
+            # shape: (batch, pomo, selected_list_length, 2)
+
+            rolled_seq = ordered_seq.roll(dims=2, shifts=-1)
+            # ordered_seq를 한 칸씩 이동하여 각 구간의 거리를 계산하기 위한 준비
+            # shape: (batch, pomo, selected_list_length, 2)
+
+            segment_lengths = ((ordered_seq - rolled_seq) ** 2).sum(3).sqrt()
+            # 각 구간의 유클리드 거리 계산
+            # shape: (batch, pomo, selected_list_length)
+
+            return segment_lengths
+        
     def _get_travel_distance(self):
         gathering_index = self.selected_node_list[:, :, :, None].expand(-1, -1, -1, 2) 
         # 마지막에 2인 이유는 (x,y)의 노드 인덱스를 가져오기 위함임

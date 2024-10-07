@@ -1,11 +1,25 @@
 
 import torch
 
+import sys
 import os
-from logging import getLogger
+import logging
+import logging
+from tqdm import tqdm
 
-from CVRPEnv import CVRPEnv as Env
+
+# 상위 폴더 경로를 추가
+# 현재 파일이 위치한 디렉토리에서 두 단계 상위 폴더로 이동
+grandparent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+
+# sys.path에 두 단계 상위 폴더를 추가
+sys.path.append(grandparent_dir)
+
+from CVRPEnv_battery import CVRPEnv as Env
 from CVRPModel import CVRPModel as Model
+
+
+
 
 from utils.utils import *
 
@@ -22,7 +36,7 @@ class CVRPTester:
         self.tester_params = tester_params #trainer와 비교했을떄 optimizer가 없음
 
         # result folder, logger
-        self.logger = getLogger(name='trainer')
+        self.logger = logging.getLogger(name='trainer')
         self.result_folder = get_result_folder() #self.result_log = LogData()가 없음
 
 
@@ -44,10 +58,11 @@ class CVRPTester:
 
         # Restore
         model_load = tester_params['model_load'] 
-        checkpoint_fullname = '{path}/checkpoint-{epoch}.pt'.format(**model_load)
+        checkpoint_fullname = '{path}/checkpoint-{epoch}_modified.pt'.format(**model_load)
         checkpoint = torch.load(checkpoint_fullname, map_location=device)
         self.model.load_state_dict(checkpoint['model_state_dict'])
-
+        
+        
         # utility
         self.time_estimator = TimeEstimator()
 
@@ -109,10 +124,17 @@ class CVRPTester:
         # POMO Rollout
         ###############################################
         state, reward, done = self.env.pre_step() #초기 상태 설정하고 초기 상태의 보상 완료 여부 반환
+        step_count = 0
         while not done: #완료가 되지 않으면
             selected, _ = self.model(state) #현재 상태에 대해 선택된 행동을 반환(node 선택)
             # shape: (batch, pomo)
             state, reward, done = self.env.step(selected) #state reward done 반환(현재 노드 인덱스, 다음 노드 인덱스, 완료 여부)
+            
+            step_count += 1
+            if reward is not None:
+                self.logger.info(f"Step {step_count} complete. Current reward: {reward.mean().item()}")
+            else:
+                self.logger.info(f"Step {step_count} complete. Reward is None")
 
         # Return
         ###############################################
@@ -127,4 +149,5 @@ class CVRPTester:
         # shape: (batch,)
         aug_score = -max_aug_pomo_reward.float().mean()  # negative sign to make positive value #전체 증강 데이터를 고려한 평균 보상 계산(보상이 낮을수록 좋기때문에 부호 반전)
 
+        self.logger.info(f"Batch completed. No-AUG Score: {no_aug_score.item()}, AUG Score: {aug_score.item()}")
         return no_aug_score.item(), aug_score.item() #증강 x일떄와 증강일때의 score 값(스칼라) 반환

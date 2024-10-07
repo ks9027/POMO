@@ -1,8 +1,8 @@
 ##########################################################################################
 # Machine Environment Config
 
-DEBUG_MODE = False
-USE_CUDA = not DEBUG_MODE
+DEBUG_MODE = True
+USE_CUDA = False
 CUDA_DEVICE_NUM = 0
 
 
@@ -12,8 +12,13 @@ CUDA_DEVICE_NUM = 0
 import os
 import sys
 
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))  # CVRProblemDef 경로 추가
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..')))  # utils 경로 추가
+
+
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, "..")  # for problem_def
+sys.path.insert(0, "..")  # for problem_def  
 sys.path.insert(0, "../..")  # for utils
 
 
@@ -30,8 +35,8 @@ from CVRPTrainer import CVRPTrainer as Trainer
 # parameters
 
 env_params = {
-    'problem_size': 100,
-    'pomo_size': 100,
+    'problem_size': 10,
+    'pomo_size': 10,
 }
 
 model_params = {
@@ -113,9 +118,9 @@ def main():
 
 def _set_debug_mode():
     global trainer_params
-    trainer_params['epochs'] = 2
-    trainer_params['train_episodes'] = 4
-    trainer_params['train_batch_size'] = 2
+    trainer_params['epochs'] = 10
+    trainer_params['train_episodes'] = 10
+    trainer_params['train_batch_size'] = 5
 
 
 def _print_config():

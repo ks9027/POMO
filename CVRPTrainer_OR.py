@@ -1,30 +1,16 @@
 
 import torch
-from logging import getLogger #코드 실행 과정에서 발생하는 정보를 기록하는데 사용
-import sys
-import os
+from logging import getLogger
 
-# 상위 폴더 경로를 추가
-# 현재 파일이 위치한 디렉토리에서 두 단계 상위 폴더로 이동
-grandparent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+from CVRPEnv_OR import CVRPEnv as Env
+from CVRPModel_OR import CVRPModel as Model
 
-# sys.path에 두 단계 상위 폴더를 추가
-sys.path.append(grandparent_dir)
+from torch.optim import Adam as Optimizer
+from torch.optim.lr_scheduler import MultiStepLR as Scheduler
 
-
-from CVRPEnv_battery import CVRPEnv as Env #CVRP 환경 클래스 임포트
-from CVRPModel import CVRPModel as Model #CVRP 모델 클래스 임포트
-
-from torch.optim import Adam as Optimizer #adam 임포트
-from torch.optim.lr_scheduler import MultiStepLR as Scheduler #학습률 조정 스케쥴러 임포트
-
-from utils.utils import * #유틸 임포트
-
+from utils.utils import *
 import plotly.graph_objs as go
 import plotly.io as pio
-
-# 최종 경로를 시각화하고 이미지로 저장하는 함수
-# 최종 경로를 시각화하고 이미지로 저장하는 함수 수정
 def plot_and_save_final_routes(depot_xy, node_xy, final_routes, image_path):
     fig = go.Figure()
 

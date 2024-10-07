@@ -10,7 +10,7 @@ class CVRPModel(nn.Module): #nn.module을 상속받아 정의
         super().__init__() #nn.module의 초기화 메서드를 호출하여 기본 기능을 사용할 수 있게 함
         self.model_params = model_params #전달받은 하이퍼파라미터를 저장
 
-        self.encoder = CVRP_Encoder(**model_params) #인코더 모듈을 초기화
+        self.encoder = CVRP_Encoder(**model_params) #인코더 모듈을 초기화 **는 dict로 받아온다는 뜻이며 model params가 1개가 아니라는 의미
         self.decoder = CVRP_Decoder(**model_params) #디코더 모듈을 초기화
         self.encoded_nodes = None #인코딩된 노드 정보를 저장하기 위한 변수를 초기화 초기값은 none이며 pre_forward에서 값이 채워짐
         # shape: (batch, problem+1, EMBEDDING_DIM)
@@ -28,6 +28,7 @@ class CVRPModel(nn.Module): #nn.module을 상속받아 정의
         self.encoded_nodes = self.encoder(depot_xy, node_xy_demand) #인코더를 사용하여 depot 과 node 정보를 인코딩된 벡터로 변환
         # shape: (batch, problem+1, embedding)
         self.decoder.set_kv(self.encoded_nodes) #인코딩된 노드 정보를 디코더에 전달하여 디코더가 이후에 예측 작업을 준비할 수 있도록 함
+     
 
     def forward(self, state): #모델이 주어진 상태에서 다음 움직임을 결정하는 역할을 하는 클래스
         batch_size = state.BATCH_IDX.size(0) #현재 상태에서 배치의 크기를 계산
@@ -45,7 +46,7 @@ class CVRPModel(nn.Module): #nn.module을 상속받아 정의
 
             # # Use encoded_depot for decoder input_2
             # encoded_first_node = self.encoded_nodes[:, [0], :]
-            # # shape: (batch, 1, embedding)
+            # # shape: (batch,   1, embedding)
             # self.decoder.set_q2(encoded_first_node)
 
         elif state.selected_count == 1:  # Second Move, POMO #depot에서 노드로의 1번째 움직임을 의미
@@ -55,7 +56,7 @@ class CVRPModel(nn.Module): #nn.module을 상속받아 정의
         else:
             encoded_last_node = _get_encoding(self.encoded_nodes, state.current_node) #마지막으로 방문한 노드의 임베딩을 가져옴
             # shape: (batch, pomo, embedding)
-            probs = self.decoder(encoded_last_node, state.load, ninf_mask=state.ninf_mask) #디코더를 통해 각 가능한 노드에 대한 확률을 계산
+            probs = self.decoder(encoded_last_node, state.load, state.soc, ninf_mask=state.ninf_mask) #디코더를 통해 각 가능한 노드에 대한 확률을 계산
             # shape: (batch, pomo, problem+1)
 
             if self.training or self.model_params['eval_type'] == 'softmax': #모델의 학습은 softmax 기반으로 평가
@@ -66,7 +67,10 @@ class CVRPModel(nn.Module): #nn.module을 상속받아 정의
                     # shape: (batch, pomo)
                     prob = probs[state.BATCH_IDX, state.POMO_IDX, selected].reshape(batch_size, pomo_size) # 선택된 노드에 대한 실제 확률 값을 담음
                     # shape: (batch, pomo)
-                    if (prob != 0).all(): #모든 요소가 0이 아니면 while 루프 종료
+
+
+                    # 배터리가 부족한 경우, 드론을 depot으로 복귀시킴
+                    if (prob != 0).all() and (state.soc[state.BATCH_IDX, state.POMO_IDX] > 15).all():
                         break
 
             else:
@@ -182,7 +186,7 @@ class CVRP_Decoder(nn.Module): #디코더 구현
 
         # self.Wq_1 = nn.Linear(embedding_dim, head_num * qkv_dim, bias=False)
         # self.Wq_2 = nn.Linear(embedding_dim, head_num * qkv_dim, bias=False)
-        self.Wq_last = nn.Linear(embedding_dim+1, head_num * qkv_dim, bias=False) #얘만 왜 embedding_dim+1이지?
+        self.Wq_last = nn.Linear(embedding_dim+2, head_num * qkv_dim, bias=False) #얘만 왜 embedding_dim+1이지?
         self.Wk = nn.Linear(embedding_dim, head_num * qkv_dim, bias=False)
         self.Wv = nn.Linear(embedding_dim, head_num * qkv_dim, bias=False)
 
@@ -216,7 +220,7 @@ class CVRP_Decoder(nn.Module): #디코더 구현
         self.q2 = reshape_by_heads(self.Wq_2(encoded_q2), head_num=head_num)
         # shape: (batch, head_num, n, qkv_dim)
 
-    def forward(self, encoded_last_node, load, ninf_mask):
+    def forward(self, encoded_last_node, load, soc, ninf_mask):
         # encoded_last_node.shape: (batch, pomo, embedding)
         # load.shape: (batch, pomo)
         # ninf_mask.shape: (batch, pomo, problem)
@@ -225,12 +229,13 @@ class CVRP_Decoder(nn.Module): #디코더 구현
 
         #  Multi-Head Attention
         #######################################################
-        input_cat = torch.cat((encoded_last_node, load[:, :, None]), dim=2) #last node와 수요를 결합하여 하나의 입력으로 만듦
-        # shape = (batch, group, EMBEDDING_DIM+1)
+        input_cat = torch.cat((encoded_last_node, load[:, :, None], soc[:,:,None]), dim=2) #last node와 수요를 결합하여 하나의 입력으로 만듦 #decoder의 input 값
+        # shape = (batch, group, EMBEDDING_DIM+2)
+
 
         q_last = reshape_by_heads(self.Wq_last(input_cat), head_num=head_num) #input cat을 Wq선형 변환을 통해 q_last로 변환
         # shape: (batch, head_num, pomo, qkv_dim)
-
+        
         # q = self.q1 + self.q2 + q_last
         # # shape: (batch, head_num, pomo, qkv_dim)
         q = q_last # q = q_last
@@ -261,6 +266,8 @@ class CVRP_Decoder(nn.Module): #디코더 구현
         # shape: (batch, pomo, problem)
 
         return probs
+    
+    
 
 
 ########################################

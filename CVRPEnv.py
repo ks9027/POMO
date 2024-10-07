@@ -1,9 +1,15 @@
 
 from dataclasses import dataclass
 import torch
+import sys
+import os
+import logging
+import logging
 
+# 상위 폴더 경로를 추가
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from CVRProblemDef import get_random_problems, augment_xy_data_by_8_fold
-
+logging.basicConfig(level=logging.DEBUG)
 
 @dataclass #dataclass는 데이터 중심의 클래스 정의를 더 간결하고 명확하게 만들어주는 도구임
 class Reset_State: #초기화 시의 상태 저장 클래스
@@ -39,6 +45,7 @@ class CVRPEnv: #환경을 설정하고 데이터를 관리하며 상태를 추�
         self.env_params = env_params #환경 매개변수 저장
         self.problem_size = env_params['problem_size'] #문제의 크기
         self.pomo_size = env_params['pomo_size'] #pomo의 크기
+        
 
         self.FLAG__use_saved_problems = False #저장된 문제 데이터를 사용할지 여부(기본값은 false)
         self.saved_depot_xy = None # 얻어진 depot의 좌표를 저장할 변수
