@@ -23,29 +23,8 @@ from utils.utils import * #유틸 임포트
 import plotly.graph_objs as go
 import plotly.io as pio
 
-# 최종 경로를 시각화하고 이미지로 저장하는 함수
-# 최종 경로를 시각화하고 이미지로 저장하는 함수 수정
-def plot_and_save_final_routes(depot_xy, node_xy, final_routes, image_path):
-    fig = go.Figure()
 
-    # Depot 표시
-    fig.add_trace(go.Scatter(x=[depot_xy[0]], y=[depot_xy[1]], mode='markers', marker=dict(size=12, color='red'), name='Depot'))
 
-    # 노드 표시
-    fig.add_trace(go.Scatter(x=node_xy[:, 0], y=node_xy[:, 1], mode='markers+text', text=[str(i) for i in range(len(node_xy))], name='Nodes'))
-
-    # 경로 표시 (각 경로의 시작과 끝에 depot을 추가)
-    for pomo_route in final_routes:
-        if len(pomo_route) > 0:
-            route_x = [node_xy[node][0] for node in pomo_route]  # POMO가 방문한 노드들의 X 좌표
-            route_y = [node_xy[node][1] for node in pomo_route]  # POMO가 방문한 노드들의 Y 좌표
-            fig.add_trace(go.Scatter(x=route_x, y=route_y, mode='lines+markers', name='Route'))
-
-    fig.update_layout(title="Final CVRP Optimized Routes", xaxis_title="X Coordinate", yaxis_title="Y Coordinate")
-
-    # 이미지로 저장
-    pio.write_image(fig, image_path, format='png')
-    return fig
 
 class CVRPTrainer:
     def __init__(self,
@@ -98,6 +77,7 @@ class CVRPTrainer:
         # utility
         self.time_estimator = TimeEstimator() #학습 시간추정을 위한 도구를 초기화
 
+    # CVRPTrainer 클래스에서 run 메서드에 추가된 시각화 코드 부분
     def run(self):
         self.time_estimator.reset(self.start_epoch)  # 학습 시간 추정을 위해 객체 상태를 초기화
         for epoch in range(self.start_epoch, self.trainer_params['epochs'] + 1):  # 학습이 시작되는 루프
@@ -130,10 +110,10 @@ class CVRPTrainer:
                 try:
                     # Train score 이미지 저장
                     util_save_log_image_with_label(image_prefix, self.trainer_params['logging']['log_image_params_1'],
-                                                   self.result_log, labels=['train_score'])
+                                                self.result_log, labels=['train_score'])
                     # Train loss 이미지 저장
                     util_save_log_image_with_label(image_prefix, self.trainer_params['logging']['log_image_params_2'],
-                                                   self.result_log, labels=['train_loss'])
+                                                self.result_log, labels=['train_loss'])
                 except FileNotFoundError as e:
                     self.logger.error(f"Log image style file not found: {e}")
                 except Exception as e:
@@ -151,50 +131,80 @@ class CVRPTrainer:
                 }
                 torch.save(checkpoint_dict, '{}/checkpoint-{}.pt'.format(self.result_folder, epoch))
 
-            # Save Image # 에포크의 시각화한 이미지를 저장
-            if all_done or (epoch % img_save_interval) == 0:
-                image_prefix = '{}/img/checkpoint-{}'.format(self.result_folder, epoch)
+            if all_done or (epoch % model_save_interval) == 0: 
                 try:
-                    util_save_log_image_with_label(image_prefix, self.trainer_params['logging']['log_image_params_1'],
-                                                   self.result_log, labels=['train_score'])
-                    util_save_log_image_with_label(image_prefix, self.trainer_params['logging']['log_image_params_2'],
-                                                   self.result_log, labels=['train_loss'])
-                except FileNotFoundError as e:
-                    self.logger.error(f"Log image style file not found: {e}")
-                except Exception as e:
-                    self.logger.error(f"Error while saving log image: {e}")
+                    # 이미지 저장 경로 확인 및 생성
+                    img_dir = os.path.join(self.result_folder, 'img')
+                    if not os.path.exists(img_dir):
+                        os.makedirs(img_dir)
 
-            # All-done announcement # 학습 완료 후 로그 출력
+                    # depot 및 node 정보 확인
+                    depot_xy = self.env.reset_state.depot_xy[0, 0].cpu().numpy()  # node 0은 depot으로 간주
+                    node_xy = self.env.reset_state.node_xy[0].cpu().numpy()  # node 1부터 10까지의 노드 좌표
+                    node_demands = self.env.reset_state.node_demand[0].cpu().numpy()  # node 1부터 10까지의 노드 수요
 
-            if all_done or (epoch % img_save_interval) == 0:
-                try:
-                    # 상태 확인 (각각의 첫 번째 배치의 depot 및 node 정보만 가져옴)
-                    depot_xy = self.env.reset_state.depot_xy[0].cpu().numpy()
-                    node_xy = self.env.reset_state.node_xy[0].cpu().numpy()
                     final_routes = self.env.selected_node_list[0].cpu().numpy()
 
-                    # 경로 유효성 검사 및 가장 짧은 경로 찾기
+                    # 최단 경로 찾기
                     min_route_length = float('inf')
                     shortest_route = None
+                    shortest_path_idx = None
 
-                    for route in final_routes:
-                        valid_route = [int(node) for node in route if int(node) < len(node_xy)]  # 유효한 인덱스만 포함
-                        if len(valid_route) < min_route_length:
-                            min_route_length = len(valid_route)
-                            shortest_route = valid_route
+                    for pomo_idx, route in enumerate(final_routes):
+                        valid_route = [int(node) for node in route]  # 모든 노드를 int로 처리 (depot은 node 0으로 간주)
+                        route_length = len(valid_route)
+                        if route_length < min_route_length:
+                            min_route_length = route_length
+                            shortest_route = valid_route  # shortest_route는 depot과 1~10번 노드로 구성
+                            shortest_path_idx = pomo_idx
 
-                    # 시각화할 경로 선택
-                    if shortest_route is not None:
-                        image_path = f'{self.result_folder}/img/checkpoint-{epoch}_shortest_route.png'
-                        plot_and_save_final_routes(depot_xy[0], node_xy, [shortest_route], image_path)
-                        self.logger.info(f"Saved shortest route image for epoch {epoch}")
-                    else:
-                        self.logger.warning("No valid route found.")
+                                            # 시각화 및 저장 (최단 경로만)
+                        if shortest_route is not None and len(shortest_route) > 0:
+                            # 시각화 객체 생성
+                            fig = go.Figure()  # fig가 여기서 정의됩니다.
+                            
+                            # Depot 표시
+                            fig.add_trace(go.Scatter(
+                                x=[depot_xy[0]], y=[depot_xy[1]],  # depot의 좌표가 맞는지 확인
+                                mode='markers+text', 
+                                marker=dict(size=12, color='red'),
+                                text=['Depot'], 
+                                textposition='top center', 
+                                name='Depot'
+                            ))
+
+                            # Node 1부터 10까지의 위치와 수요 표시 (node 0은 depot이므로 제외)
+                            for node_idx in range(1, len(node_xy)+1):
+                                demand_text = f"Node {node_idx} (Demand: {node_demands[node_idx - 1]:.2f})"
+                                fig.add_trace(go.Scatter(x=[node_xy[node_idx-1][0]], y=[node_xy[node_idx-1][1]],
+                                                        mode='markers+text', marker=dict(size=8, color='blue'),
+                                                        text=[demand_text], textposition='top center', name=f'Node {node_idx}'))
+
+                            # shortest_route의 각 노드가 depot을 포함하여 처리되도록 수정 (1~10 노드 인덱스와 depot 0 포함)
+                            # depot은 0으로 인식하고, 나머지 노드는 1~10 인덱스로 처리
+                            shortest_path = [depot_xy if node == 0 else node_xy[node - 1] for node in shortest_route]
+                            path_x = [point[0] for point in shortest_path]
+                            path_y = [point[1] for point in shortest_path]
+
+                            # 시각화
+                            fig.add_trace(go.Scatter(x=path_x, y=path_y, mode='lines+markers',
+                                                    name=f'Shortest Path - Drone {shortest_path_idx + 1}',
+                                                    line=dict(color='green', width=2)))  # 초록색으로 최단 경로 표시
+
+                            # 이미지 저장 경로 설정 및 저장
+                            image_path = f'{img_dir}/checkpoint-{epoch}_shortest_route.png'
+                            pio.write_image(fig, image_path, format='png')
+
+                            # 최단 경로를 기록한 드론이 방문한 노드 순서 출력
+                            print(f"Drone {shortest_path_idx + 1} visited the following nodes in this order: {shortest_route}")
+
+                            self.logger.info(f"Saved shortest route image for epoch {epoch}")
+                        else:
+                            self.logger.warning("No valid route found.")
+
                 except Exception as e:
                     self.logger.error(f"Error while saving shortest route image: {e}")
-
-
-
+                    # 시각화 및 저장 (최단 경로만)
 
     def _train_one_epoch(self, epoch):
 
@@ -203,7 +213,7 @@ class CVRPTrainer:
 
         train_num_episode = self.trainer_params['train_episodes'] #현재 에포크에서 학습할 에피소드의 수를 나타냄
         episode = 0 #현재까지 처리한 에피소드 수
-        loop_cnt = 0 #반복 횟수 추적
+        
         while episode < train_num_episode: #에피소드 수가 train_num_episode에 도달할 때까지 계속됨
 
             remaining = train_num_episode - episode #현재 남아있는 에피소드 수 
@@ -216,21 +226,18 @@ class CVRPTrainer:
 
             episode = episode + batch_size #현재 에피소드 수를 업데이트 함
 
-            # Log First 10 Batch, only at the first epoch
-            if epoch == self.start_epoch: #첫 에포크인지 확인
-                loop_cnt = loop_cnt + 1                # 첫번째 에포크 동안 몇 개의 배치가 처리되었는지 카운트
-                if loop_cnt <= 10: # 첫 10개의 배치만 기록
-                    self.logger.info('Epoch {:3d}: Train {:3d}/{:3d}({:1.1f}%)  Score: {:.4f},  Loss: {:.4f}'
-                                     .format(epoch, episode, train_num_episode, 100. * episode / train_num_episode,
-                                             score_AM.avg, loss_AM.avg))
+            # 각 배치가 끝날 때마다 로그 출력
+            self.logger.info(
+                'Epoch {:3d}: Train {:3d}/{:3d}({:1.1f}%)  Score: {:.4f},  Loss: {:.4f}'
+                .format(epoch, episode, train_num_episode, 100. * episode / train_num_episode, score_AM.avg, loss_AM.avg)
+            )  # 매 배치마다 로그를 출력
 
-        # Log Once, for each epoch
-        self.logger.info('Epoch {:3d}: Train ({:3.0f}%)  Score: {:.4f},  Loss: {:.4f}' #각 에포크가 끝날 때마다 한 번씩 로그를 기록
+        # 에포크 종료 시 로그 출력
+        self.logger.info('Epoch {:3d}: Train ({:3.0f}%)  Score: {:.4f},  Loss: {:.4f}'
                          .format(epoch, 100. * episode / train_num_episode,
                                  score_AM.avg, loss_AM.avg))
 
         return score_AM.avg, loss_AM.avg
-
     def _train_one_batch(self, batch_size): #배치 단위로 모델을 학습시키는 과정을 구현
 
         # Prep
@@ -266,6 +273,7 @@ class CVRPTrainer:
         # Score
         ###############################################
         max_pomo_reward, _ = reward.max(dim=1)  # get best results from pomo #pono의 여러 선택중 최대 보상을 취한다. 최상의 경로 선택을 의미
+        
         score_mean = -max_pomo_reward.float().mean()  # negative sign to make positive value #최대 보상의 평균을 구해 score_mean 계산
         torch.autograd.set_detect_anomaly(True)
         # Step & Return

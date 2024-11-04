@@ -1,7 +1,7 @@
 ##########################################################################################
 # Machine Environment Config
 
-DEBUG_MODE = True
+DEBUG_MODE = False
 USE_CUDA = False
 CUDA_DEVICE_NUM = 0
 
@@ -35,7 +35,7 @@ from CVRPTrainer import CVRPTrainer as Trainer
 # parameters
 
 env_params = {
-    'problem_size': 10,
+    'problem_size':10,
     'pomo_size': 10,
 }
 
@@ -53,7 +53,7 @@ model_params = {
 optimizer_params = {
     'optimizer': {
         'lr': 1e-4,
-        'weight_decay': 1e-6
+        'weight_decay': 1e-4
     },
     'scheduler': {
         'milestones': [8001, 8051],
@@ -64,9 +64,9 @@ optimizer_params = {
 trainer_params = {
     'use_cuda': USE_CUDA,
     'cuda_device_num': CUDA_DEVICE_NUM,
-    'epochs': 8100,
-    'train_episodes': 10 * 1000,
-    'train_batch_size': 64,
+    'epochs': 100,
+    'train_episodes': 50,
+    'train_batch_size': 128,
     'prev_model_path': None,
     'logging': {
         'model_save_interval': 500,

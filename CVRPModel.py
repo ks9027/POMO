@@ -28,7 +28,23 @@ class CVRPModel(nn.Module): #nn.module을 상속받아 정의
         self.encoded_nodes = self.encoder(depot_xy, node_xy_demand) #인코더를 사용하여 depot 과 node 정보를 인코딩된 벡터로 변환
         # shape: (batch, problem+1, embedding)
         self.decoder.set_kv(self.encoded_nodes) #인코딩된 노드 정보를 디코더에 전달하여 디코더가 이후에 예측 작업을 준비할 수 있도록 함
-     
+
+    def calculate_distance_to_depot(self, selected_node_xy, depot_xy):
+        distance = torch.norm(selected_node_xy - depot_xy, dim=-1)  # 거리 계산
+        return distance
+    
+    def calculate_soc(self, payload, distances):
+        # 배터리 소모율 계산
+        soc_consumption = torch.zeros_like(payload)
+
+        # 각 payload 구간에 따라 BCR 적용
+        soc_consumption = soc_consumption + torch.logical_and(payload >= 0, payload < 0.2) * (-2.29705 * 0.1 + 3.87886) * distances
+        soc_consumption = soc_consumption + torch.logical_and(payload >= 0.2, payload < 0.4) * (-2.29705 * 0.3 + 3.87886) * distances
+        soc_consumption = soc_consumption + torch.logical_and(payload >= 0.4, payload < 0.6) * (-2.29705 * 0.5 + 3.87886) * distances
+        soc_consumption = soc_consumption + torch.logical_and(payload >= 0.6, payload < 0.8) * (-2.29705 * 0.7 + 3.87886) * distances
+        soc_consumption = soc_consumption + torch.logical_and(payload >= 0.8, payload <= 1.0) * (-2.29705 * 0.9 + 3.87886) * distances
+
+        return soc_consumption
 
     def forward(self, state): #모델이 주어진 상태에서 다음 움직임을 결정하는 역할을 하는 클래스
         batch_size = state.BATCH_IDX.size(0) #현재 상태에서 배치의 크기를 계산
@@ -58,19 +74,20 @@ class CVRPModel(nn.Module): #nn.module을 상속받아 정의
             # shape: (batch, pomo, embedding)
             probs = self.decoder(encoded_last_node, state.load, state.soc, ninf_mask=state.ninf_mask) #디코더를 통해 각 가능한 노드에 대한 확률을 계산
             # shape: (batch, pomo, problem+1)
+            if torch.isnan(probs).any() or torch.isinf(probs).any():
+                print("Found nan or inf in probs!")
+                print(probs)  # 값을 출력하여 디버깅
+                raise ValueError("nan or inf found in probs!")  # 문제가 발생했을 경우 강제 중단
 
             if self.training or self.model_params['eval_type'] == 'softmax': #모델의 학습은 softmax 기반으로 평가
-                while True:  # to fix pytorch.multinomial bug on selecting 0 probability elements #확률이 0인 요소를 선택하는 버그가 있어 while 루프를 사용하여 이를 방지
-                    with torch.no_grad(): ##경사 계산 비활성화 (파라미터를 변경하지 않기 떄문에 메모리 사용을 줄이기 위함)
+                while True:  # to fix pytorch.multinomial bug on selecting 0 probability elements
+                    with torch.no_grad():
                         selected = probs.reshape(batch_size * pomo_size, -1).multinomial(1) \
-                            .squeeze(dim=1).reshape(batch_size, pomo_size) #각 드론이 각 노드로 이동할 확률을 나타내며 차원을 변형하고 복구
+                            .squeeze(dim=1).reshape(batch_size, pomo_size)
                     # shape: (batch, pomo)
-                    prob = probs[state.BATCH_IDX, state.POMO_IDX, selected].reshape(batch_size, pomo_size) # 선택된 노드에 대한 실제 확률 값을 담음
+                    prob = probs[state.BATCH_IDX, state.POMO_IDX, selected].reshape(batch_size, pomo_size)
                     # shape: (batch, pomo)
-
-
-                    # 배터리가 부족한 경우, 드론을 depot으로 복귀시킴
-                    if (prob != 0).all() and (state.soc[state.BATCH_IDX, state.POMO_IDX] > 15).all():
+                    if (prob != 0).all():
                         break
 
             else:

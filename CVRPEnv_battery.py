@@ -1,4 +1,5 @@
 
+
 from dataclasses import dataclass
 import torch
 import sys
@@ -152,7 +153,7 @@ class CVRPEnv: #환경을 설정하고 데이터를 관리하며 상태를 추�
         # shape: (batch, pomo)
         self.load = torch.ones(size=(self.batch_size, self.pomo_size)) # 모든 pomo가 가지고 있는 용량을 나타냄
         # shape: (batch, pomo)
-        self.soc = torch.ones(size=(self.batch_size, self.pomo_size)) * (self.initial_battery - 5)  # 초기 배터리 잔량을 100으로 설정 (예시)
+        self.soc = torch.ones(size=(self.batch_size, self.pomo_size)) * (self.initial_battery-5)  # 초기 배터리 잔량을 95로 설정 (예시)
         # shape: (batch, pomo)
         self.visited_ninf_flag = torch.zeros(size=(self.batch_size, self.pomo_size, self.problem_size+1)) #각 노드가 방문되었는지 여부를 나타내며 모든 요소가 0으로 초기화
         # shape: (batch, pomo, problem+1)
@@ -179,7 +180,9 @@ class CVRPEnv: #환경을 설정하고 데이터를 관리하며 상태를 추�
 
     def step(self, selected): 
         # selected.shape: (batch, pomo)
-
+        print("-----------------------------------------------------")
+        print(f"self.soc.shape: {self.soc.shape}")
+        print(f"self.soc : {self.soc}")
         # Dynamic-1: 노드 선택과 업데이트
         self.selected_count += 1  # 현재까지 선택된 노드의 개수를 증가
         self.current_node = selected  # 현재 POMO들이 위치한 노드 저장
@@ -187,48 +190,112 @@ class CVRPEnv: #환경을 설정하고 데이터를 관리하며 상태를 추�
 
         # Dynamic-2: 적재량과 배터리 업데이트
         self.at_the_depot = (selected == 0)  # 각 POMO가 현재 depot에 있는지 확인
-        print("HellO")
         # 수요 리스트 가져오기 및 선택된 노드의 수요 추출
+        
         demand_list = self.depot_node_demand[:, None, :].expand(self.batch_size, self.pomo_size, -1)  # 각 노드의 수요 저장
         gathering_index = selected[:, :, None]  # 선택된 노드의 인덱스 가져오기
         selected_demand = demand_list.gather(dim=2, index=gathering_index).squeeze(dim=2)  # 선택된 노드의 수요 가져오기
 
+        batch_size, pomo_size = self.current_node.shape  # (batch, pomo)
+
+
+        
+        # 이전 노드를 가져올 수 있는지 확인
+        if self.selected_node_list.shape[2] > 1:
+            # 이전에 선택된 노드 인덱스를 가져옴
+            previous_node = self.selected_node_list[:, :, -2].unsqueeze(-1).expand(batch_size, pomo_size, 2)  # (batch, pomo, 2)
+        else:
+            # 첫 스텝에서는 이전 노드가 없으므로 depot 좌표로 설정
+            previous_node = torch.zeros(batch_size, pomo_size, 2, device=self.depot_node_xy.device, dtype=torch.long)
+
+        # 이전에 선택된 노드의 좌표 가져오기
+        previous_node_xy = self.depot_node_xy.gather(1, previous_node)  # (batch, pomo, 2)
+
+        # 현재 노드 좌표 가져오기
+        current_node = self.current_node.unsqueeze(-1).expand(batch_size, pomo_size, 2)  # (batch, pomo, 2)
+        current_node_xy = self.depot_node_xy.gather(1, current_node)  # (batch, pomo, 2)
+
+        # 거리 계산
+        distance = torch.sqrt(((current_node_xy - previous_node_xy) ** 2).sum(dim=-1))  # (batch, pomo)
+
+        print(f"previous_node_xy: {previous_node_xy}")
+        print(f"current_node_xy: {current_node_xy}")
+        print(f"distance: {distance}")
+        print(f"soc before reach node: {self.soc}")
+        # 배터리 소모 계산 (이전 노드 -> 현재 노드 이동)
+        soc_consumption = self.calculate_soc(self.load, distance)  # POMO 차원 포함
+        print(f"soc consumption : {soc_consumption}")
+        self.soc = self.soc - soc_consumption
+        print(f"soc after reaching node: {self.soc}")
+        
+    
+        
+        
         # Load 업데이트 (방문한 노드의 수요만큼 감소)
         self.load = self.load - selected_demand
         self.load[self.at_the_depot] = 1  # depot에 있는 드론은 적재량을 다시 채움
-
-        # Distance 계산 및 배터리 소모량 업데이트
-        segment_distances = self._get_segment_distances()
-
-        for i in range(self.selected_node_list.size(2) - 1):  # 각 구간의 거리에 따라 배터리 소모량 계산
-            current_distances = segment_distances[:, :, i]
-            self.soc = self.soc - self.calculate_soc(self.load, current_distances)  # 각 구간별로 배터리 소모 적용
-
-        # 배터리 잔량에 따라 depot 복귀 여부 결정
-        distance_to_depot = self.calculate_distance_to_depot(selected)
-        battery_consumption_to_depot = self.calculate_soc(self.load, distance_to_depot)
-        remaining_battery_after_return = self.soc - battery_consumption_to_depot
-
-        # 배터리가 부족한 드론은 depot으로 복귀
-        selected = selected.clone()
-        selected[(remaining_battery_after_return < 15) & (~self.at_the_depot)] = 0  # 배터리 부족한 드론만 depot으로 복귀
-        self.soc[self.at_the_depot] = self.initial_battery - 5  # depot에 도착하면 배터리 리필
-
+        # 바로 이전 노드와 현재 노드 간의 좌표를 가져올 때 gather 사용
+    
         # 방문한 노드 마스킹 처리
         self.visited_ninf_flag[self.BATCH_IDX, self.POMO_IDX, selected] = float('-inf')
         self.visited_ninf_flag[:, :, 0][~self.at_the_depot] = 0  # depot은 항상 선택 가능하도록 유지
+        print(f"BATCH_IDX: {self.BATCH_IDX}")
+        print(f"POMO_IDX: {self.POMO_IDX}")
+        print(f"selected: {selected}")
+
+        # 마스킹 처리된 visited_ninf_flag 값 확인
+        print(f"visited_ninf_flag after masking: {self.visited_ninf_flag}")
 
         # 선택 불가능한 노드 마스킹
-        self.ninf_mask = self.visited_ninf_flag.clone()
+        self.load_ninf_mask = self.visited_ninf_flag.clone()
         round_error_epsilon = 0.00001
         demand_too_large = self.load[:, :, None] + round_error_epsilon < demand_list
-        self.ninf_mask[demand_too_large] = float('-inf')
+        self.load_ninf_mask[demand_too_large] = float('-inf')
+        self.load_ninf_mask[:, :, 0][~self.at_the_depot] = 0  # depot은 항상 선택 가능하도록 유지
 
+        print(f"self.load_ninf_mask : {self.load_ninf_mask}")
+
+        
+        self.ninf_mask = self.load_ninf_mask.clone()
+        
+        print("ninf_mask before masking:", self.ninf_mask)  # 마스킹 전 확인
+
+        for pomo_idx in range(self.pomo_size):  # 각 POMO의 드론에 대해
+            # DEPOT에 있는 드론들은 배터리를 95로 충전
+            print("==========================NEW STEP===================================")
+            self.soc[self.at_the_depot] = 95
+            print(f"pomo_idx: {pomo_idx}")
+            print(f"current_node: {self.current_node[:, pomo_idx]}")
+            print(f"current node demand : {selected_demand}")
+            print(f"battery량: {self.soc[:,pomo_idx]}")
+            print(f"load량:  {self.load[:,pomo_idx]}")
+            print("===========================node별 배터리 가능 판독=============================")
+            for node in range(1, self.problem_size + 1):  # depot(0)을 제외한 각 노드에 대해
+                # 현재 위치에서 특정 노드를 거쳐 depot까지 가는 배터리 소모량 계산
+                total_battery_needed = self.node_to_depot(pomo_idx, node)
+                
+                # 소모량이 잘 계산되는지 확인
+                print(f"node: {node}, total_battery_needed: {total_battery_needed}")
+                
+
+                # 배터리 잔량이 15 이상 남는지 확인
+                soc_too_large = self.soc[:, pomo_idx].unsqueeze(-1) < total_battery_needed + 15
+                print(f"soc_too_large: {soc_too_large}")
+                
+                
+                # soc_too_large가 True인 경우에만 마스킹 적용
+                if soc_too_large.any():
+                    print(f"마스킹 적용: pomo_idx {pomo_idx}, node {node}")
+                    self.ninf_mask[:, pomo_idx, node] = float('-inf')
+
+    
+        self.ninf_mask[:, :, 0][~self.at_the_depot] = 0  # depot은 항상 선택 가능하도록 유지# 배터리 부족으로 선택 불가로 마스킹        
+        print("ninf_mask after battery masking:", self.ninf_mask)  # 마스킹 후 확인           
         # 완료 여부 체크
         newly_finished = (self.visited_ninf_flag == float('-inf')).all(dim=2)
         self.finished = self.finished + newly_finished
 
-        # depot은 완료된 이후에도 선택 가능하도록 설정
+        # depot은 완료된 이후에도 선택 가능하도록 설정 
         self.ninf_mask[:, :, 0][self.finished] = 0
 
         # 상태 업데이트
@@ -251,23 +318,57 @@ class CVRPEnv: #환경을 설정하고 데이터를 관리하며 상태를 추�
 
     
     def calculate_soc(self, payload, distances):
-        # 배터리 소모율 계산
-        soc_consumption = torch.zeros_like(payload)
+        alpha = 2.29705
+        beta = 3.87886
 
-        # 각 payload 구간에 따라 BCR 적용
-        soc_consumption = soc_consumption + torch.logical_and(payload >= 0, payload < 0.2) * (-2.29705 * 0.1 + 3.87886) * distances
-        soc_consumption = soc_consumption + torch.logical_and(payload >= 0.2, payload < 0.4) * (-2.29705 * 0.3 + 3.87886) * distances
-        soc_consumption = soc_consumption + torch.logical_and(payload >= 0.4, payload < 0.6) * (-2.29705 * 0.5 + 3.87886) * distances
-        soc_consumption = soc_consumption + torch.logical_and(payload >= 0.6, payload < 0.8) * (-2.29705 * 0.7 + 3.87886) * distances
-        soc_consumption = soc_consumption + torch.logical_and(payload >= 0.8, payload <= 1.0) * (-2.29705 * 0.9 + 3.87886) * distances
+        # BCR 계산 후 소수점 오류를 줄이기 위해 반올림
+        bcr = torch.round((alpha * payload + beta) * 1e6) / 1e6  # 소수점 6자리까지 반올림
 
+
+        soc_consumption = bcr * distances
+        
         return soc_consumption
-    
+        
     #def calculate_travel_time(self, current_node):
         # 노드 간의 거리와 속도에 따라 시간을 계산합니다.
     #   distances = self._get_travel_distance()
     #  time_per_node = distances / 22.0  # 속도 22km/h로 고정
     #    return time_per_node
+    
+    def node_to_depot(self, pomo_idx, node_idx):
+        # 현재 노드 인덱스 추출 (batch 크기와 맞음)
+        current_node_idx = self.current_node[:, pomo_idx].unsqueeze(-1).unsqueeze(-1)  # (batch, 1, 1)
+        
+        # 현재 노드의 좌표를 얻기 위한 gather 사용 (batch, pomo, 2)
+        current_node_xy = self.depot_node_xy.gather(1, current_node_idx.expand(-1, 1, 2)).squeeze(1)  # (batch, 2)
+
+        # 특정 노드 좌표 가져오기 (node_idx는 단일 노드를 의미)
+        target_node_xy = self.depot_node_xy[:, node_idx, :]  # (batch, 2)
+
+        # 현재 노드에서 특정 노드까지 거리 계산 (유클리드 거리)
+        distance_to_node = torch.sqrt(((current_node_xy - target_node_xy) ** 2).sum(dim=-1))  # (batch,)
+
+        # 특정 노드에서 depot으로 돌아가는 거리 계산
+        depot_xy = self.depot_node_xy[:, 0, :]  # depot의 좌표 (batch, 2)
+        distance_to_depot = torch.sqrt(((target_node_xy - depot_xy) ** 2).sum(dim=-1))  # (batch,)
+
+        # 노드까지 소모되는 배터리 양 계산
+        battery_consumption_to_node = self.calculate_soc(self.load[:, pomo_idx], distance_to_node)  # (batch,)
+
+        # 특정 노드에서 수요 처리 후 남은 적재량 계산
+        remaining_load = self.load[:, pomo_idx] - self.depot_node_demand[:, node_idx]  # (batch,)
+        
+        # 남은 적재량으로 depot까지 이동할 때 소모되는 배터리 양 계산
+        battery_consumption_to_depot = self.calculate_soc(remaining_load, distance_to_depot)  # (batch,)
+
+        # 총 배터리 소모량 계산
+        total_battery_needed = battery_consumption_to_node + battery_consumption_to_depot  # (batch,)
+        
+        return total_battery_needed
+
+
+
+
     
     def calculate_distance_to_depot(self, selected):
         # 선택된 노드에서 디팟까지의 거리를 계산하는 함수
@@ -276,7 +377,7 @@ class CVRPEnv: #환경을 설정하고 데이터를 관리하며 상태를 추�
 
         distance_to_depot = torch.sqrt(((node_xy - depot_xy) ** 2).sum(dim=-1))  # 유클리드 거리 계산
         return distance_to_depot
-    
+
     def _get_segment_distances(self):
             gathering_index = self.selected_node_list[:, :, :, None].expand(-1, -1, -1, 2)
             # shape: (batch, pomo, selected_list_length, 2)

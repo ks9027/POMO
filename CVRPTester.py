@@ -6,7 +6,8 @@ import os
 import logging
 import logging
 from tqdm import tqdm
-
+import plotly.graph_objs as go
+import plotly.io as pio
 
 # 상위 폴더 경로를 추가
 # 현재 파일이 위치한 디렉토리에서 두 단계 상위 폴더로 이동
@@ -58,13 +59,14 @@ class CVRPTester:
 
         # Restore
         model_load = tester_params['model_load'] 
-        checkpoint_fullname = '{path}/checkpoint-{epoch}_modified.pt'.format(**model_load)
+        checkpoint_fullname = '{path}/checkpoint-{epoch}.pt'.format(**model_load)
         checkpoint = torch.load(checkpoint_fullname, map_location=device)
         self.model.load_state_dict(checkpoint['model_state_dict'])
         
         
         # utility
         self.time_estimator = TimeEstimator()
+        
 
     def run(self):
         self.time_estimator.reset() #시간 측정기를 초기화
@@ -103,6 +105,73 @@ class CVRPTester:
                 self.logger.info(" *** Test Done *** ")
                 self.logger.info(" NO-AUG SCORE: {:.4f} ".format(score_AM.avg))
                 self.logger.info(" AUGMENTATION SCORE: {:.4f} ".format(aug_score_AM.avg))
+            if all_done:
+                # depot 및 node 정보 확인
+                depot_xy = self.env.reset_state.depot_xy[0, 0].cpu().numpy()  # node 0은 depot으로 간주
+                node_xy = self.env.reset_state.node_xy[0].cpu().numpy()  # node 1부터 나머지 노드 좌표
+                node_demands = self.env.reset_state.node_demand[0].cpu().numpy()  # node의 수요 정보
+
+                final_routes = self.env.selected_node_list[0].cpu().numpy()
+
+                # 최단 경로 찾기
+                min_route_length = float('inf')
+                shortest_route = None
+                shortest_path_idx = None
+
+                for pomo_idx, route in enumerate(final_routes):
+                    valid_route = [int(node) for node in route]  # 모든 노드를 int로 처리
+                    route_length = len(valid_route)
+                    if route_length < min_route_length:
+                        min_route_length = route_length
+                        shortest_route = valid_route
+                        shortest_path_idx = pomo_idx
+
+                # 시각화 및 저장 (최단 경로만)
+                if shortest_route is not None and len(shortest_route) > 0:
+                    # 시각화 객체 생성
+                    fig = go.Figure()
+
+                    # Depot 표시
+                    fig.add_trace(go.Scatter(
+                        x=[depot_xy[0]], y=[depot_xy[1]],  # depot의 좌표가 맞는지 확인
+                        mode='markers+text', 
+                        marker=dict(size=12, color='red'),
+                        text=['Depot'], 
+                        textposition='top center', 
+                        name='Depot'
+                    ))
+
+                    # Node 1부터 10까지의 위치와 수요 표시 (node 0은 depot이므로 제외)
+                    for node_idx in range(len(node_xy)):
+                        demand_text = f"Node {node_idx + 1} (Demand: {node_demands[node_idx]:.2f})"
+                        fig.add_trace(go.Scatter(x=[node_xy[node_idx][0]], y=[node_xy[node_idx][1]],
+                                                mode='markers+text', marker=dict(size=8, color='blue'),
+                                                text=[demand_text], textposition='top center', name=f'Node {node_idx + 1}'))
+
+                    # 최단 경로에 따른 노드의 좌표 시각화
+                    shortest_path = [depot_xy if node == 0 else node_xy[node - 1] for node in shortest_route]
+                    path_x = [point[0] for point in shortest_path]
+                    path_y = [point[1] for point in shortest_path]
+
+                    # 시각화
+                    fig.add_trace(go.Scatter(x=path_x, y=path_y, mode='lines+markers',
+                                            name=f'Shortest Path - Drone {shortest_path_idx + 1}',
+                                            line=dict(color='green', width=2)))  # 초록색으로 최단 경로 표시
+
+                    # 이미지 저장 경로 설정 및 저장
+                    img_dir = os.path.join(self.result_folder, 'img')
+                    if not os.path.exists(img_dir):
+                        os.makedirs(img_dir)
+                    image_path = f'{img_dir}/checkpoint-test.png'
+                    pio.write_image(fig, image_path, format='png')
+
+                    # 최단 경로를 기록한 드론이 방문한 노드 순서 출력
+                    print(f"Drone {shortest_path_idx + 1} visited the following nodes in this order: {shortest_route}")
+
+                    self.logger.info(f"Saved shortest route image for test")
+                else:
+                    self.logger.warning("No valid route found.")
+
 
     def _test_one_batch(self, batch_size):
 
