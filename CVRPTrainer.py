@@ -3,7 +3,8 @@ import torch
 from logging import getLogger #코드 실행 과정에서 발생하는 정보를 기록하는데 사용
 import sys
 import os
-
+import random
+import psutil
 # 상위 폴더 경로를 추가
 # 현재 파일이 위치한 디렉토리에서 두 단계 상위 폴더로 이동
 grandparent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -147,67 +148,140 @@ class CVRPTrainer:
 
                     # 최단 경로 찾기
                     min_route_length = float('inf')
-                    shortest_route = None
-                    shortest_path_idx = None
+                    shortest_routes = []  # 최단 경로들을 저장할 리스트
 
                     for pomo_idx, route in enumerate(final_routes):
-                        valid_route = [int(node) for node in route]  # 모든 노드를 int로 처리 (depot은 node 0으로 간주)
+                        valid_route = [int(node) for node in route]
                         route_length = len(valid_route)
+
                         if route_length < min_route_length:
                             min_route_length = route_length
-                            shortest_route = valid_route  # shortest_route는 depot과 1~10번 노드로 구성
-                            shortest_path_idx = pomo_idx
+                            shortest_routes = [(pomo_idx, valid_route)]  # 새로운 최단 경로로 리스트 초기화
+                        elif route_length == min_route_length:
+                            shortest_routes.append((pomo_idx, valid_route))  # 동일한 최단 경로 추가
 
-                                            # 시각화 및 저장 (최단 경로만)
-                        if shortest_route is not None and len(shortest_route) > 0:
-                            # 시각화 객체 생성
-                            fig = go.Figure()  # fig가 여기서 정의됩니다.
-                            
-                            # Depot 표시
+                        # 최단 경로 중 하나를 무작위로 선택
+                    if shortest_routes:
+                        shortest_path_idx, shortest_route = random.choice(shortest_routes)
+                                            # 시각화 객체 생성
+                        fig = go.Figure()  # fig가 여기서 정의됩니다.
+                        
+                        # Depot 표시
+                        fig.add_trace(go.Scatter(
+                            x=[depot_xy[0]], y=[depot_xy[1]],  # depot의 좌표가 맞는지 확인
+                            mode='markers+text', 
+                            marker=dict(size=12, color='red'),
+                            text=['Depot'], 
+                            textposition='top center', 
+                            name='Depot'
+                        ))
+
+                        # Node 1부터 10까지의 위치와 수요 표시 (node 0은 depot이므로 제외)
+                        # Node 위치와 수요 표시
+                        for node_idx, node in enumerate(node_xy, start=1):
+                            demand_text = f"Node {node_idx}"
                             fig.add_trace(go.Scatter(
-                                x=[depot_xy[0]], y=[depot_xy[1]],  # depot의 좌표가 맞는지 확인
-                                mode='markers+text', 
-                                marker=dict(size=12, color='red'),
-                                text=['Depot'], 
-                                textposition='top center', 
-                                name='Depot'
+                                x=[node[0]], y=[node[1]],
+                                mode='markers+text',
+                                marker=dict(size=5, color='blue'),
+                                text=[demand_text],
+                                textposition='top center',
+                                name=f"Node {node_idx} (Demand: {node_demands[node_idx - 1]:.2f})"  # 범례에 demand 포함
                             ))
 
-                            # Node 1부터 10까지의 위치와 수요 표시 (node 0은 depot이므로 제외)
-                            for node_idx in range(1, len(node_xy)+1):
-                                demand_text = f"Node {node_idx} (Demand: {node_demands[node_idx - 1]:.2f})"
-                                fig.add_trace(go.Scatter(x=[node_xy[node_idx-1][0]], y=[node_xy[node_idx-1][1]],
-                                                        mode='markers+text', marker=dict(size=8, color='blue'),
-                                                        text=[demand_text], textposition='top center', name=f'Node {node_idx}'))
+                        # shortest_route의 각 노드가 depot을 포함하여 처리되도록 수정 (1~10 노드 인덱스와 depot 0 포함)
+                        # depot은 0으로 인식하고, 나머지 노드는 1~10 인덱스로 처리
+                        shortest_path = [depot_xy if node == 0 else node_xy[node - 1] for node in shortest_route]
+                        path_x = [point[0] for point in shortest_path]
+                        path_y = [point[1] for point in shortest_path]
 
-                            # shortest_route의 각 노드가 depot을 포함하여 처리되도록 수정 (1~10 노드 인덱스와 depot 0 포함)
-                            # depot은 0으로 인식하고, 나머지 노드는 1~10 인덱스로 처리
-                            shortest_path = [depot_xy if node == 0 else node_xy[node - 1] for node in shortest_route]
-                            path_x = [point[0] for point in shortest_path]
-                            path_y = [point[1] for point in shortest_path]
+                        # 경로 시각화
+                        segment_start = 0
+                        current_color_index = 0
+                        colors = ['blue', 'red', 'green', 'orange', 'purple']
 
-                            # 시각화
-                            fig.add_trace(go.Scatter(x=path_x, y=path_y, mode='lines+markers',
-                                                    name=f'Shortest Path - Drone {shortest_path_idx + 1}',
-                                                    line=dict(color='green', width=2)))  # 초록색으로 최단 경로 표시
+                        for i in range(1, len(shortest_route)):
+                            if shortest_route[i] == 0:  # Depot 도달 시 경로 분리
+                                # 현재 Segment 처리
+                                segment_nodes = shortest_route[segment_start:i + 1]
+                                segment_coords = [depot_xy if node == 0 else node_xy[node - 1] for node in segment_nodes]
+                                segment_x = [point[0] for point in segment_coords]
+                                segment_y = [point[1] for point in segment_coords]
 
-                            # 이미지 저장 경로 설정 및 저장
-                            image_path = f'{img_dir}/checkpoint-{epoch}_shortest_route.png'
-                            pio.write_image(fig, image_path, format='png')
+                                # Segment 추가
+                                fig.add_trace(go.Scatter(
+                                    x=segment_x, y=segment_y,
+                                    mode='lines+markers',
+                                    line=dict(color=colors[current_color_index % len(colors)], width=2),
+                                    marker=dict(size=6),
+                                    name=f'Segment {current_color_index + 1}'
+                                ))
 
-                            # 최단 경로를 기록한 드론이 방문한 노드 순서 출력
-                            print(f"Drone {shortest_path_idx + 1} visited the following nodes in this order: {shortest_route}")
+                                current_color_index += 1
+                                segment_start = i  # 다음 Segment 시작 지점
 
-                            self.logger.info(f"Saved shortest route image for epoch {epoch}")
-                        else:
-                            self.logger.warning("No valid route found.")
+                        # 점선 처리: Depot에서 첫 노드와 마지막 노드에서 Depot으로
+                        first_node = depot_xy if shortest_route[1] == 0 else node_xy[shortest_route[1] - 1]
+                        last_node = depot_xy if shortest_route[-2] == 0 else node_xy[shortest_route[-2] - 1]
 
+                        fig.add_trace(go.Scatter(
+                            x=[depot_xy[0], first_node[0]],
+                            y=[depot_xy[1], first_node[1]],
+                            mode='lines',
+                            line=dict(color='black', dash='dot', width=2),
+                            name='Depot to First Node'
+                        ))
+
+                        fig.add_trace(go.Scatter(
+                            x=[last_node[0], depot_xy[0]],
+                            y=[last_node[1], depot_xy[1]],
+                            mode='lines',
+                            line=dict(color='black', dash='dot', width=2),
+                            name='Last Node to Depot'
+                        ))
+                        
+                        # 화살표 대체: 경로 선 위에 작은 점을 추가해 방향성을 암시
+                        for i in range(1, len(shortest_route)):
+                            start_node = depot_xy if shortest_route[i - 1] == 0 else node_xy[shortest_route[i - 1] - 1]
+                            end_node = depot_xy if shortest_route[i] == 0 else node_xy[shortest_route[i] - 1]
+
+                            # 중간 지점을 계산하여 점 추가
+                            mid_x = (start_node[0] + end_node[0]) / 2
+                            mid_y = (start_node[1] + end_node[1]) / 2
+
+                            fig.add_trace(go.Scatter(
+                                x=[mid_x],
+                                y=[mid_y],
+                                mode='markers',
+                                marker=dict(size=6, color='gray', symbol='triangle-up'),
+                                showlegend=False
+                            ))
+                                                # 그래프 크기 조정
+                        fig.update_layout(
+                            width=1000,  # 너비 조정
+                            height=800,  # 높이 조정
+                            title=dict(
+                                text="Shortest Route Visualization",
+                                font=dict(size=20)  # 제목 글자 크기 조정
+                            )
+                        )
+                        # 이미지 저장 경로 설정 및 저장
+                        image_path = f'{img_dir}/checkpoint-{epoch}_shortest_route.png'
+                        pio.write_image(fig, image_path, format='png')
+
+                        # 최단 경로를 기록한 드론이 방문한 노드 순서 출력
+                        print(f"Drone {shortest_path_idx + 1} visited the following nodes in this order: {shortest_route}")
+
+                        self.logger.info(f"Saved shortest route image for epoch {epoch}")
+                    else:
+                        self.logger.warning("No valid route found.")
+                
                 except Exception as e:
                     self.logger.error(f"Error while saving shortest route image: {e}")
                     # 시각화 및 저장 (최단 경로만)
-
+                    
     def _train_one_epoch(self, epoch):
-
+        torch.cuda.empty_cache()
         score_AM = AverageMeter() #에포크 동안의 평균 점수
         loss_AM = AverageMeter() #에포크 동안의 평균 손실
 
@@ -231,7 +305,6 @@ class CVRPTrainer:
                 'Epoch {:3d}: Train {:3d}/{:3d}({:1.1f}%)  Score: {:.4f},  Loss: {:.4f}'
                 .format(epoch, episode, train_num_episode, 100. * episode / train_num_episode, score_AM.avg, loss_AM.avg)
             )  # 매 배치마다 로그를 출력
-
         # 에포크 종료 시 로그 출력
         self.logger.info('Epoch {:3d}: Train ({:3.0f}%)  Score: {:.4f},  Loss: {:.4f}'
                          .format(epoch, 100. * episode / train_num_episode,
@@ -239,7 +312,7 @@ class CVRPTrainer:
 
         return score_AM.avg, loss_AM.avg
     def _train_one_batch(self, batch_size): #배치 단위로 모델을 학습시키는 과정을 구현
-
+        print(f"Processing batch size: {batch_size}")
         # Prep
         ###############################################
         self.model.train() #모델을 학습 모드로 전환
@@ -249,11 +322,10 @@ class CVRPTrainer:
 
         prob_list = torch.zeros(size=(batch_size, self.env.pomo_size, 0)) #배치와 pomo의 크기에 대한 텐서를 초기화(확률 리스트를 초기화)
         # shape: (batch, pomo, 0~problem)
-
         # POMO Rollout
         ###############################################
         state, reward, done = self.env.pre_step() #pre step을 호출하여 초기 상태를 가져오고 state reward done 변수에 저장
-
+        
         while not done:
             selected, prob = self.model(state) #현재 상태에 대해 모델의 예측을 수행하고, 선택된 노드와 해당 확률을 반환
             # shape: (batch, pomo)
@@ -268,6 +340,7 @@ class CVRPTrainer:
         # size = (batch, pomo)
         loss = -advantage * log_prob  # Minus Sign: To Increase REWARD #advantage와 log prob의 곱에 마이너스 기호를 붙여 손실 계산
         # shape: (batch, pomo)
+        
         loss_mean = loss.mean() #평균 손실 계산
 
         # Score

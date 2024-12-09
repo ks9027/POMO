@@ -65,7 +65,7 @@ class CVRPEnv: #환경을 설정하고 데이터를 관리하며 상태를 추�
         # shape: (batch, problem+1)
 
         # Dynamic-1
-        ####################################``
+        ####################################
         self.selected_count = None #현재까지 선택된 노드의 수를 저장하는 변수
         self.current_node = None #현재 선택된 노드를 저장하는 변수
         # shape: (batch, pomo)
@@ -180,7 +180,9 @@ class CVRPEnv: #환경을 설정하고 데이터를 관리하며 상태를 추�
 
     def step(self, selected): 
         # selected.shape: (batch, pomo)
-
+        print("-----------------------------------------------------")
+        print(f"self.soc.shape: {self.soc.shape}")
+        print(f"self.soc : {self.soc}")
         # Dynamic-1: 노드 선택과 업데이트
         self.selected_count += 1  # 현재까지 선택된 노드의 개수를 증가
         self.current_node = selected  # 현재 POMO들이 위치한 노드 저장
@@ -216,11 +218,15 @@ class CVRPEnv: #환경을 설정하고 데이터를 관리하며 상태를 추�
         # 거리 계산
         distance = torch.sqrt(((current_node_xy - previous_node_xy) ** 2).sum(dim=-1))  # (batch, pomo)
 
-
+        print(f"previous_node_xy: {previous_node_xy}")
+        print(f"current_node_xy: {current_node_xy}")
+        print(f"distance: {distance}")
+        print(f"soc before reach node: {self.soc}")
         # 배터리 소모 계산 (이전 노드 -> 현재 노드 이동)
         soc_consumption = self.calculate_soc(self.load, distance)  # POMO 차원 포함
+        print(f"soc consumption : {soc_consumption}")
         self.soc = self.soc - soc_consumption
-
+        print(f"soc after reaching node: {self.soc}")
         
     
         
@@ -233,9 +239,12 @@ class CVRPEnv: #환경을 설정하고 데이터를 관리하며 상태를 추�
         # 방문한 노드 마스킹 처리
         self.visited_ninf_flag[self.BATCH_IDX, self.POMO_IDX, selected] = float('-inf')
         self.visited_ninf_flag[:, :, 0][~self.at_the_depot] = 0  # depot은 항상 선택 가능하도록 유지
+        print(f"BATCH_IDX: {self.BATCH_IDX}")
+        print(f"POMO_IDX: {self.POMO_IDX}")
+        print(f"selected: {selected}")
 
-
-
+        # 마스킹 처리된 visited_ninf_flag 값 확인
+        print(f"visited_ninf_flag after masking: {self.visited_ninf_flag}")
 
         # 선택 불가능한 노드 마스킹
         self.load_ninf_mask = self.visited_ninf_flag.clone()
@@ -244,36 +253,44 @@ class CVRPEnv: #환경을 설정하고 데이터를 관리하며 상태를 추�
         self.load_ninf_mask[demand_too_large] = float('-inf')
         self.load_ninf_mask[:, :, 0][~self.at_the_depot] = 0  # depot은 항상 선택 가능하도록 유지
 
-
+        print(f"self.load_ninf_mask : {self.load_ninf_mask}")
 
         
         self.ninf_mask = self.load_ninf_mask.clone()
         
-
+        print("ninf_mask before masking:", self.ninf_mask)  # 마스킹 전 확인
 
         for pomo_idx in range(self.pomo_size):  # 각 POMO의 드론에 대해
             # DEPOT에 있는 드론들은 배터리를 95로 충전
-
+            print("==========================NEW STEP===================================")
             self.soc[self.at_the_depot] = 95
-
+            print(f"pomo_idx: {pomo_idx}")
+            print(f"current_node: {self.current_node[:, pomo_idx]}")
+            print(f"current node demand : {selected_demand}")
+            print(f"battery량: {self.soc[:,pomo_idx]}")
+            print(f"load량:  {self.load[:,pomo_idx]}")
+            print("===========================node별 배터리 가능 판독=============================")
             for node in range(1, self.problem_size + 1):  # depot(0)을 제외한 각 노드에 대해
                 # 현재 위치에서 특정 노드를 거쳐 depot까지 가는 배터리 소모량 계산
                 total_battery_needed = self.node_to_depot(pomo_idx, node)
                 
-
+                # 소모량이 잘 계산되는지 확인
+                print(f"node: {node}, total_battery_needed: {total_battery_needed}")
                 
 
                 # 배터리 잔량이 15 이상 남는지 확인
                 soc_too_large = self.soc[:, pomo_idx].unsqueeze(-1) < total_battery_needed + 15
-
+                print(f"soc_too_large: {soc_too_large}")
                 
                 
                 # soc_too_large가 True인 경우에만 마스킹 적용
                 if soc_too_large.any():
+                    print(f"마스킹 적용: pomo_idx {pomo_idx}, node {node}")
                     self.ninf_mask[:, pomo_idx, node] = float('-inf')
 
     
-        self.ninf_mask[:, :, 0][~self.at_the_depot] = 0  # depot은 항상 선택 가능하도록 유지# 배터리 부족으로 선택 불가로 마스킹                 
+        self.ninf_mask[:, :, 0][~self.at_the_depot] = 0  # depot은 항상 선택 가능하도록 유지# 배터리 부족으로 선택 불가로 마스킹        
+        print("ninf_mask after battery masking:", self.ninf_mask)  # 마스킹 후 확인           
         # 완료 여부 체크
         newly_finished = (self.visited_ninf_flag == float('-inf')).all(dim=2)
         self.finished = self.finished + newly_finished

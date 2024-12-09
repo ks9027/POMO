@@ -29,8 +29,8 @@ from CVRPTester import CVRPTester as Tester
 # parameters
 
 env_params = {
-    'problem_size': 100,
-    'pomo_size': 100,
+    'problem_size': 10,
+    'pomo_size': 10,
 }
 
 model_params = {
@@ -49,17 +49,17 @@ tester_params = {
     'use_cuda': USE_CUDA,
     'cuda_device_num': CUDA_DEVICE_NUM,
     'model_load': {
-        'path': 'C:\\Users\\kbskk\\project_folder\\myenv\\POMO-master\\NEW_py_ver\\CVRP\\POMO\\result\\20241011_105759_train_cvrp_n100_with_instNorm',  # directory path of pre-trained model and log files saved.
-        'epoch': 50,  # epoch version of pre-trained model to laod.
+        'path': 'C:\\Users\\kbskk\\project_folder\\myenv\\POMO-master\\NEW_py_ver\\CVRP\\POMO\\result\\20241209_164805_train_cvrp_n100_with_instNorm',  # directory path of pre-trained model and log files saved.
+        'epoch': 50,  # epoch version of pre-trained model to load.
     },
     'test_episodes': 10*100,
-    'test_batch_size': 1000,
+    'test_batch_size': 128,
     'augmentation_enable': True,
     'aug_factor': 8,
     'aug_batch_size': 400,
     'test_data_load': {
         'enable': True,
-        'filename': '../vrp100_test_seed2345.pt'
+        'filename': '../vrp10_test_seed0002.pt'
     },
 }
 if tester_params['augmentation_enable']:

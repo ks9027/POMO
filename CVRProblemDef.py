@@ -1,31 +1,43 @@
 
-import torch
-import numpy as np
+import subprocess  # subprocess 모듈을 가져옴
+import sys
+
+# torch 모듈을 임시로 설치하는 코드
+try:
+    import torch
+except ImportError:
+    print("Torch is not installed. Installing torch...")
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "torch"])
+    import torch
 
 
-def get_random_problems(batch_size, problem_size): # size를 입력으로 받아 무작위로 생성된 경로 문제를 반환
+
+
+def get_random_problems(batch_size, problem_size, scale=1): # size를 입력으로 받아 무작위로 생성된 경로 문제를 반환
     #batch_size = 동시에 생성할 문제의 개수
     #problem_size = 문제 내의 고객 노드의 수(방문해야 할 위치의 수)
 
-    depot_xy = torch.rand(size=(batch_size, 1, 2))
+    depot_xy = torch.full((batch_size, 1, 2), 0.5*scale) # 나중에 depot 고정해야하니까 잊지 말기!!!
     # shape: (batch, 1, 2) # (문제의 개수, depot의 개수, 2차원)
 
-    node_xy = torch.rand(size=(batch_size, problem_size, 2))
+    node_xy = torch.rand(size=(batch_size, problem_size, 2))*scale 
     # shape: (batch, problem, 2)  # (문제의 개수, node의 개수, 2차원)
 
-    if problem_size == 20:
+    if problem_size == 10:
+        demand_scaler = 15  
+    elif problem_size == 20:
         demand_scaler = 30
     elif problem_size == 50:
         demand_scaler = 40
     elif problem_size == 100:
-        demand_scaler = 50
+        demand_scaler = 50 ## 현재 problem size가 20 50 100으로 고정되어 있는데 이건 나중에 바꿔도 됨
     else:
         raise NotImplementedError
 
-    node_demand = torch.randint(1, 10, size=(batch_size, problem_size)) / float(demand_scaler)
-    # shape: (batch, problem) #demand scaler를 통해 수요의 크기가 문제의 크기에 맞게 조정
-
+    node_demand = torch.rand(size=(batch_size, problem_size)) * 0.3
+    
     return depot_xy, node_xy, node_demand
+
 
 
 def augment_xy_data_by_8_fold(xy_data):

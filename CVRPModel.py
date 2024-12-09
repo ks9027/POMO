@@ -29,22 +29,6 @@ class CVRPModel(nn.Module): #nn.module을 상속받아 정의
         # shape: (batch, problem+1, embedding)
         self.decoder.set_kv(self.encoded_nodes) #인코딩된 노드 정보를 디코더에 전달하여 디코더가 이후에 예측 작업을 준비할 수 있도록 함
 
-    def calculate_distance_to_depot(self, selected_node_xy, depot_xy):
-        distance = torch.norm(selected_node_xy - depot_xy, dim=-1)  # 거리 계산
-        return distance
-    
-    def calculate_soc(self, payload, distances):
-        # 배터리 소모율 계산
-        soc_consumption = torch.zeros_like(payload)
-
-        # 각 payload 구간에 따라 BCR 적용
-        soc_consumption = soc_consumption + torch.logical_and(payload >= 0, payload < 0.2) * (-2.29705 * 0.1 + 3.87886) * distances
-        soc_consumption = soc_consumption + torch.logical_and(payload >= 0.2, payload < 0.4) * (-2.29705 * 0.3 + 3.87886) * distances
-        soc_consumption = soc_consumption + torch.logical_and(payload >= 0.4, payload < 0.6) * (-2.29705 * 0.5 + 3.87886) * distances
-        soc_consumption = soc_consumption + torch.logical_and(payload >= 0.6, payload < 0.8) * (-2.29705 * 0.7 + 3.87886) * distances
-        soc_consumption = soc_consumption + torch.logical_and(payload >= 0.8, payload <= 1.0) * (-2.29705 * 0.9 + 3.87886) * distances
-
-        return soc_consumption
 
     def forward(self, state): #모델이 주어진 상태에서 다음 움직임을 결정하는 역할을 하는 클래스
         batch_size = state.BATCH_IDX.size(0) #현재 상태에서 배치의 크기를 계산

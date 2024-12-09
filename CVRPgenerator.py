@@ -13,15 +13,15 @@ grandparent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 
 sys.path.append(grandparent_dir)
 # 문제 설정
 env_params = {
-    'problem_size': 100,  # 10개의 노드를 가진 문제 설정
-    'pomo_size': 100,     # POMO 수 (드론 또는 차량 수)
+    'problem_size': 10,  # 10개의 노드를 가진 문제 설정
+    'pomo_size': 10,     # POMO 수 (드론 또는 차량 수)
 }
 
 # VRP 환경 초기화
 env = Env(**env_params)
 
 # 생성할 배치 사이즈
-batch_size = 1000  # 한 번에 1000개의 문제 생성
+batch_size = 100  # 한 번에 1000개의 문제 생성
 
 # VRP 문제 생성
 env.load_problems(batch_size)  # 문제 데이터 로드
@@ -38,7 +38,7 @@ if not os.path.exists(output_dir):
     os.makedirs(output_dir)
 
 # 문제 데이터를 저장할 파일명
-output_filename = os.path.join(output_dir, 'vrp100_test_seed2345.pt')
+output_filename = os.path.join(output_dir, 'vrp10_test_seed0002.pt')
 
 # 문제 데이터 딕셔너리로 저장
 data_dict = {

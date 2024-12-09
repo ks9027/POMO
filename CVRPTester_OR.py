@@ -125,6 +125,7 @@ class CVRPTester:
 
         max_aug_pomo_reward, _ = max_pomo_reward.max(dim=0)  # get best results from augmentation
         # shape: (batch,)
+
         aug_score = -max_aug_pomo_reward.float().mean()  # negative sign to make positive value
 
         return no_aug_score.item(), aug_score.item()

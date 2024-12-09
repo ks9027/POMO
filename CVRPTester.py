@@ -67,6 +67,27 @@ class CVRPTester:
         # utility
         self.time_estimator = TimeEstimator()
         
+        # Add convert_to_tensor as a class method
+    def convert_to_tensor(self, detailed_route_info):
+        depot_coordinates = None
+        node_coordinates = []
+        node_demands = []
+
+        for info in detailed_route_info:
+            if info['type'] == 'depot':
+                depot_coordinates = info['coordinates']
+            else:
+                node_coordinates.append(info['coordinates'])
+                node_demands.append(info['demand'])
+
+        if depot_coordinates is not None:
+            depot_tensor = torch.tensor(depot_coordinates).reshape(1, 2)  # (1, 2)
+        else:
+            raise ValueError("No depot information found in the detailed route.")
+        node_tensor = torch.tensor(node_coordinates).reshape(1, -1, 2)
+        demand_tensor = torch.tensor(node_demands).reshape(1, -1)
+        
+        return depot_tensor, node_tensor, demand_tensor
 
     def run(self):
         self.time_estimator.reset() #시간 측정기를 초기화
@@ -167,7 +188,34 @@ class CVRPTester:
 
                     # 최단 경로를 기록한 드론이 방문한 노드 순서 출력
                     print(f"Drone {shortest_path_idx + 1} visited the following nodes in this order: {shortest_route}")
+                    # Depot 및 Node 정보 추출
+                    depot_xy = self.env.reset_state.depot_xy[0, 0].cpu().numpy()  # Depot 좌표
+                    node_xy = self.env.reset_state.node_xy[0].cpu().numpy()  # 각 노드의 좌표
+                    node_demands = self.env.reset_state.node_demand[0].cpu().numpy()  # 각 노드의 demand
 
+                    # `shortest_route`에 따라 depot 및 노드 정보를 추출
+                    detailed_route_info = []
+                    for node in shortest_route:
+                        if node == 0:
+                            # Depot 정보
+                            detailed_route_info.append({
+                                "type": "depot",
+                                "coordinates": depot_xy,
+                                "demand": 0  # Depot의 demand는 0
+                            })
+                        else:
+                            # Node 정보
+                            detailed_route_info.append({
+                                "type": f"node_{node}",
+                                "coordinates": node_xy[node - 1],  # Node index는 1부터 시작
+                                "demand": node_demands[node - 1]
+                            })
+
+                    depot_tensor, node_tensor, demand_tensor = self.convert_to_tensor(detailed_route_info)
+                        # Logging or further processing
+                    print("Depot Tensor:", depot_tensor)
+                    print("Node Tensor:", node_tensor)
+                    print("Demand Tensor:", demand_tensor)                  
                     self.logger.info(f"Saved shortest route image for test")
                 else:
                     self.logger.warning("No valid route found.")
@@ -189,7 +237,7 @@ class CVRPTester:
             self.env.load_problems(batch_size, aug_factor) #주어진 배치 크기와 증강팩터를 사용해 문제 데이터를 환경에 로드
             reset_state, _, _ = self.env.reset() #환경을 초기 상태로 리셋 후 반환
             self.model.pre_forward(reset_state) #모델의 인코더를 통해 초기상태 전처리(경로에 대한 확률 설정)
-
+        
         # POMO Rollout
         ###############################################
         state, reward, done = self.env.pre_step() #초기 상태 설정하고 초기 상태의 보상 완료 여부 반환
@@ -219,4 +267,6 @@ class CVRPTester:
         aug_score = -max_aug_pomo_reward.float().mean()  # negative sign to make positive value #전체 증강 데이터를 고려한 평균 보상 계산(보상이 낮을수록 좋기때문에 부호 반전)
 
         self.logger.info(f"Batch completed. No-AUG Score: {no_aug_score.item()}, AUG Score: {aug_score.item()}")
+
         return no_aug_score.item(), aug_score.item() #증강 x일떄와 증강일때의 score 값(스칼라) 반환
+    
