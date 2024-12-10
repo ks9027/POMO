@@ -152,7 +152,7 @@ class CVRPTester:
                     # 시각화 객체 생성
                     fig = go.Figure()
 
-                    # Depot 표시
+                # Depot 표시
                     fig.add_trace(go.Scatter(
                         x=[depot_xy[0]], y=[depot_xy[1]],  # depot의 좌표가 맞는지 확인
                         mode='markers+text', 
@@ -163,21 +163,93 @@ class CVRPTester:
                     ))
 
                     # Node 1부터 10까지의 위치와 수요 표시 (node 0은 depot이므로 제외)
-                    for node_idx in range(len(node_xy)):
-                        demand_text = f"Node {node_idx + 1} (Demand: {node_demands[node_idx]:.2f})"
-                        fig.add_trace(go.Scatter(x=[node_xy[node_idx][0]], y=[node_xy[node_idx][1]],
-                                                mode='markers+text', marker=dict(size=8, color='blue'),
-                                                text=[demand_text], textposition='top center', name=f'Node {node_idx + 1}'))
+                    # Node 위치와 수요 표시
+                    for node_idx, node in enumerate(node_xy, start=1):
+                        demand_text = f"Node {node_idx}"
+                        fig.add_trace(go.Scatter(
+                            x=[node[0]], y=[node[1]],
+                            mode='markers+text',
+                            marker=dict(size=5, color='blue'),
+                            text=[demand_text],
+                            textposition='top center',
+                            name=f"Node {node_idx} (Demand: {node_demands[node_idx - 1]:.2f})"  # 범례에 demand 포함
+                        ))
 
-                    # 최단 경로에 따른 노드의 좌표 시각화
-                    shortest_path = [depot_xy if node == 0 else node_xy[node - 1] for node in shortest_route]
-                    path_x = [point[0] for point in shortest_path]
-                    path_y = [point[1] for point in shortest_path]
+                        # shortest_route의 각 노드가 depot을 포함하여 처리되도록 수정 (1~10 노드 인덱스와 depot 0 포함)
+                        # depot은 0으로 인식하고, 나머지 노드는 1~10 인덱스로 처리
+                        shortest_path = [depot_xy if node == 0 else node_xy[node - 1] for node in shortest_route]
+                        path_x = [point[0] for point in shortest_path]
+                        path_y = [point[1] for point in shortest_path]
 
-                    # 시각화
-                    fig.add_trace(go.Scatter(x=path_x, y=path_y, mode='lines+markers',
-                                            name=f'Shortest Path - Drone {shortest_path_idx + 1}',
-                                            line=dict(color='green', width=2)))  # 초록색으로 최단 경로 표시
+                    # 경로 시각화
+                    segment_start = 0
+                    current_color_index = 0
+                    colors = ['blue', 'red', 'green', 'orange', 'purple']
+
+                    for i in range(1, len(shortest_route)):
+                        if shortest_route[i] == 0:  # Depot 도달 시 경로 분리
+                            # 현재 Segment 처리
+                            segment_nodes = shortest_route[segment_start:i + 1]
+                            segment_coords = [depot_xy if node == 0 else node_xy[node - 1] for node in segment_nodes]
+                            segment_x = [point[0] for point in segment_coords]
+                            segment_y = [point[1] for point in segment_coords]
+
+                            # Segment 추가
+                            fig.add_trace(go.Scatter(
+                                x=segment_x, y=segment_y,
+                                mode='lines+markers',
+                                line=dict(color=colors[current_color_index % len(colors)], width=2),
+                                marker=dict(size=6),
+                            ))
+
+                            current_color_index += 1
+                            segment_start = i  # 다음 Segment 시작 지점
+
+                    # 점선 처리: Depot에서 첫 노드와 마지막 노드에서 Depot으로
+                    first_node = depot_xy if shortest_route[1] == 0 else node_xy[shortest_route[1] - 1]
+                    last_node = depot_xy if shortest_route[-2] == 0 else node_xy[shortest_route[-2] - 1]
+
+                    fig.add_trace(go.Scatter(
+                        x=[depot_xy[0], first_node[0]],
+                        y=[depot_xy[1], first_node[1]],
+                        mode='lines',
+                        line=dict(color='black', dash='dot', width=2),
+                        name='Depot to First Node'
+                    ))
+
+                    fig.add_trace(go.Scatter(
+                        x=[last_node[0], depot_xy[0]],
+                        y=[last_node[1], depot_xy[1]],
+                        mode='lines',
+                        line=dict(color='black', dash='dot', width=2),
+                        name='Last Node to Depot'
+                    ))
+                    
+                    # 화살표 대체: 경로 선 위에 작은 점을 추가해 방향성을 암시
+                    for i in range(1, len(shortest_route)):
+                        start_node = depot_xy if shortest_route[i - 1] == 0 else node_xy[shortest_route[i - 1] - 1]
+                        end_node = depot_xy if shortest_route[i] == 0 else node_xy[shortest_route[i] - 1]
+
+                        # 중간 지점을 계산하여 점 추가
+                        mid_x = (start_node[0] + end_node[0]) / 2
+                        mid_y = (start_node[1] + end_node[1]) / 2
+
+                        fig.add_trace(go.Scatter(
+                            x=[mid_x],
+                            y=[mid_y],
+                            mode='markers',
+                            marker=dict(size=6, color='gray', symbol='triangle-up'),
+                            showlegend=False
+                        ))
+                                            # 그래프 크기 조정
+                    fig.update_layout(
+                        width=1000,  # 너비 조정
+                        height=800,  # 높이 조정
+                        title=dict(
+                            text="Shortest Route Visualization",
+                            font=dict(size=20)  # 제목 글자 크기 조정
+                        )
+                    )
 
                     # 이미지 저장 경로 설정 및 저장
                     img_dir = os.path.join(self.result_folder, 'img')
@@ -219,7 +291,26 @@ class CVRPTester:
                     self.logger.info(f"Saved shortest route image for test")
                 else:
                     self.logger.warning("No valid route found.")
+                # run() 함수 끝 부분에 추가
+            if all_done:
+                # 기존 경로 정보 가져오기
+                depot_xy = self.env.reset_state.depot_xy[0, 0].cpu().numpy()  # Depot 좌표
+                node_xy = self.env.reset_state.node_xy[0].cpu().numpy()  # 각 노드의 좌표
 
+                total_distance = 0  # 총 경로 길이를 저장할 변수
+
+                # shortest_route를 이용해 경로의 총 길이 계산
+                for i in range(1, len(shortest_route)):
+                    start_node = depot_xy if shortest_route[i - 1] == 0 else node_xy[shortest_route[i - 1] - 1]
+                    end_node = depot_xy if shortest_route[i] == 0 else node_xy[shortest_route[i] - 1]
+                    distance = ((start_node[0] - end_node[0]) ** 2 + (start_node[1] - end_node[1]) ** 2) ** 0.5
+                    total_distance += distance
+
+                # 총 경로 길이 로그 기록
+                self.logger.info(f"Total Distance of Shortest Route: {total_distance:.4f}")
+
+                # 출력으로도 확인
+                print(f"Total Distance of Shortest Route: {total_distance:.4f}")
 
     def _test_one_batch(self, batch_size):
 
@@ -267,6 +358,6 @@ class CVRPTester:
         aug_score = -max_aug_pomo_reward.float().mean()  # negative sign to make positive value #전체 증강 데이터를 고려한 평균 보상 계산(보상이 낮을수록 좋기때문에 부호 반전)
 
         self.logger.info(f"Batch completed. No-AUG Score: {no_aug_score.item()}, AUG Score: {aug_score.item()}")
-
+        self.logger.info(f"Batch completed. No-AUG Score: {no_aug_score.item()}, AUG Score: {aug_score.item()}")
         return no_aug_score.item(), aug_score.item() #증강 x일떄와 증강일때의 score 값(스칼라) 반환
     

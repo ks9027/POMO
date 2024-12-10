@@ -49,7 +49,7 @@ tester_params = {
     'use_cuda': USE_CUDA,
     'cuda_device_num': CUDA_DEVICE_NUM,
     'model_load': {
-        'path': 'C:\\Users\\kbskk\\project_folder\\myenv\\POMO-master\\NEW_py_ver\\CVRP\\POMO\\result\\20241209_164805_train_cvrp_n100_with_instNorm',  # directory path of pre-trained model and log files saved.
+        'path': 'C:\\Users\\kbskk\\project_folder\\myenv\\POMO-master\\NEW_py_ver\\CVRP\\POMO\\result\\20241210_104125_train_cvrp_n100_with_instNorm',  # directory path of pre-trained model and log files saved.
         'epoch': 50,  # epoch version of pre-trained model to load.
     },
     'test_episodes': 10*100,
@@ -59,7 +59,7 @@ tester_params = {
     'aug_batch_size': 400,
     'test_data_load': {
         'enable': True,
-        'filename': '../vrp10_test_seed0002.pt'
+        'filename': '../vrp10_test_seed0003.pt'
     },
 }
 if tester_params['augmentation_enable']:

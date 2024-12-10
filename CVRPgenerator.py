@@ -28,8 +28,9 @@ env.load_problems(batch_size)  # 문제 데이터 로드
 reset_state, _, _ = env.reset()  # 초기 상태로 리셋
 
 # 문제 데이터 추출
-depot_xy = reset_state.depot_xy.cpu()  # 디포의 좌표
-node_xy = reset_state.node_xy.cpu()    # 각 노드의 좌표
+scale = 5
+depot_xy = scale*reset_state.depot_xy.cpu()  # 디포의 좌표
+node_xy = scale*reset_state.node_xy.cpu()    # 각 노드의 좌표
 node_demand = reset_state.node_demand.cpu()  # 각 노드의 수요
 
 # 데이터 저장 경로 설정
@@ -38,7 +39,7 @@ if not os.path.exists(output_dir):
     os.makedirs(output_dir)
 
 # 문제 데이터를 저장할 파일명
-output_filename = os.path.join(output_dir, 'vrp10_test_seed0002.pt')
+output_filename = os.path.join(output_dir, 'vrp10_test_seed0003.pt')
 
 # 문제 데이터 딕셔너리로 저장
 data_dict = {

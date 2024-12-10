@@ -13,26 +13,15 @@ except ImportError:
 
 
 
-def get_random_problems(batch_size, problem_size, scale=1): # size를 입력으로 받아 무작위로 생성된 경로 문제를 반환
+def get_random_problems(batch_size, problem_size, scale=5): # size를 입력으로 받아 무작위로 생성된 경로 문제를 반환
     #batch_size = 동시에 생성할 문제의 개수
     #problem_size = 문제 내의 고객 노드의 수(방문해야 할 위치의 수)
 
-    depot_xy = torch.full((batch_size, 1, 2), 0.5*scale) # 나중에 depot 고정해야하니까 잊지 말기!!!
+    depot_xy = torch.full((batch_size, 1, 2), 0.5) * scale # 나중에 depot 고정해야하니까 잊지 말기!!!
     # shape: (batch, 1, 2) # (문제의 개수, depot의 개수, 2차원)
 
     node_xy = torch.rand(size=(batch_size, problem_size, 2))*scale 
     # shape: (batch, problem, 2)  # (문제의 개수, node의 개수, 2차원)
-
-    if problem_size == 10:
-        demand_scaler = 15  
-    elif problem_size == 20:
-        demand_scaler = 30
-    elif problem_size == 50:
-        demand_scaler = 40
-    elif problem_size == 100:
-        demand_scaler = 50 ## 현재 problem size가 20 50 100으로 고정되어 있는데 이건 나중에 바꿔도 됨
-    else:
-        raise NotImplementedError
 
     node_demand = torch.rand(size=(batch_size, problem_size)) * 0.3
     

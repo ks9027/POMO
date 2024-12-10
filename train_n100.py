@@ -64,7 +64,7 @@ optimizer_params = {
 trainer_params = {
     'use_cuda': USE_CUDA,
     'cuda_device_num': CUDA_DEVICE_NUM,
-    'epochs': 50,
+    'epochs': 5000,
     'train_episodes': 128,
     'train_batch_size': 128,
     'prev_model_path': None,
@@ -119,8 +119,8 @@ def main():
 def _set_debug_mode():
     global trainer_params
     trainer_params['epochs'] = 10
-    trainer_params['train_episodes'] = 10
-    trainer_params['train_batch_size'] = 5
+    trainer_params['train_episodes'] = 5
+    trainer_params['train_batch_size'] = 3
 
 
 def _print_config():

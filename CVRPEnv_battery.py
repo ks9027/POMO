@@ -269,8 +269,9 @@ class CVRPEnv: #환경을 설정하고 데이터를 관리하며 상태를 추�
                 
                 
                 # soc_too_large가 True인 경우에만 마스킹 적용
-                if soc_too_large.any():
-                    self.ninf_mask[:, pomo_idx, node] = float('-inf')
+                for batch_idx in range(self.batch_size):# soc_too_large가 True인 경우에만 마스킹 적용
+                    if soc_too_large[batch_idx, pomo_idx].any():
+                        self.ninf_mask[batch_idx, pomo_idx, node] = float('-inf')
 
     
         self.ninf_mask[:, :, 0][~self.at_the_depot] = 0  # depot은 항상 선택 가능하도록 유지# 배터리 부족으로 선택 불가로 마스킹                 
